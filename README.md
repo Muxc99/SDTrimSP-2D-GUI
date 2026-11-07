@@ -47,10 +47,6 @@ python app.py
 
 Use **Engine settings** to select the external engine root directory. The selected installation must provide a compatible run script and material table. If no engine is configured, editing remains available and calculation is disabled.
 
-## Contributions
-
-Created and maintained by **Muxc99** with **Codex** assistance.
-
 ## Third-party notices
 
 See `PLOTTER-LICENSE.txt` for the license notice applicable to the included plotting component.
