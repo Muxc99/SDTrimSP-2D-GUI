@@ -13,7 +13,7 @@ import sys
 import tempfile
 import traceback
 import ctypes
-from PySide6.QtCore import Qt, QProcess, QTimer, QUrl, QLockFile, QSettings
+from PySide6.QtCore import Qt, QProcess, QProcessEnvironment, QTimer, QUrl, QLockFile, QSettings
 from PySide6.QtGui import QDesktopServices, QFont, QFontDatabase, QTextCursor, QIcon
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QFormLayout, QGroupBox, QLabel, QLineEdit, QPushButton, QComboBox, QCheckBox,
@@ -46,13 +46,16 @@ from target_editor import TargetEditor
 from element_colors import element_colormap,tint_species_item,contrast_text
 from input_file_io import atomic_write_text,normalized_input_text
 from run_progress import RunProgress
+from app_paths import documents_root,state_root
+from engine_config import EngineConfig,discover,basic_errors,stage_tables,launch_command
+from engine_dialog import EngineDialog,preflight,show_about
 import case_model as case_model_module
 import element_picker as element_picker_module
 
 ROOT=Path(__file__).resolve().parent.parent
-VERSION='0.8.6'
+VERSION='0.9.0'
 APP_TITLE='SDTrimSP-2D_GUI v'+VERSION
-DEFAULT_CASE=ROOT/'work'/'cases'/'Ar_Si_W_fig'
+DEFAULT_CASE=documents_root()/'Cases'
 UNITS={'Å':1., 'nm':10., 'μm':10000.}
 LABELS={
  'geo_x':'横向半宽', 'geo_z':'基底底部（负值）',
@@ -100,7 +103,7 @@ from case_saving import save_input_files
 from PySide6.QtGui import QShortcut,QKeySequence
 
 class Window(NewCaseActions,InputEditing,QMainWindow):
-    def __init__(self,case=None):
+    def __init__(self,case=None,settings=None):
         super().__init__()
         # 显式加载字体，保证无屏幕渲染检查和本机界面都能显示中文。
         for font in ('msyh.ttc','msyhbd.ttc','segoeui.ttf'):
@@ -112,10 +115,11 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         icon_path=Path(__file__).parent/'assets'/'SDTrimSP-2D_GUI.ico'
         if icon_path.exists(): self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1430,920)
-        self.settings=QSettings('LocalResearchTools','SDTrimSP2DWorkbench')
-        self.engine_root=Path(str(self.settings.value('engine/root',''))).resolve() if self.settings.value('engine/root','') else None
-        if self.engine_root:
-            self.configure_material_table(self.engine_root)
+        self.settings=settings if settings is not None else QSettings('LocalResearchTools','SDTrimSP2DWorkbench')
+        self.engine_config=EngineConfig.load(self.settings,documents_root()/'Runs')
+        self.engine_root=Path(str(self.settings.value('engine/root',''))) if self.settings.value('engine/root','') else None
+        self.runtime_errors=[]
+        self.configure_material_table(self.engine_config.tables)
         self.source=None; self.namelist=None; self.figure=None; self.data=None
         self.factor=1.; self.loading=False; self.dirty=False
         self.raw_pending=set();self.raw_error=None;self.raw_applying=False
@@ -148,7 +152,7 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         self.save_shortcut=QShortcut(QKeySequence.StandardKey.Save,self);self.save_shortcut.activated.connect(self.save_current)
         self.save_as_shortcut=QShortcut(QKeySequence.StandardKey.SaveAs,self);self.save_as_shortcut.activated.connect(self.save_case)
         self.check_button=button('检查输入',self.check,QStyle.StandardPixmap.SP_DialogApplyButton)
-        self.engine_button=button('内核设置',self.configure_engine,QStyle.StandardPixmap.SP_DirOpenIcon)
+        self.engine_button=button('内核设置',self.configure_engine,QStyle.StandardPixmap.SP_ComputerIcon)
         self.engine_button.setToolTip('选择外部计算内核目录\n未配置内核时仍可编辑，但不能运行。')
         self.run_button=button('运行当前输入',self.run_case,QStyle.StandardPixmap.SP_MediaPlay,True)
         self.stop_button=button('请求停止',self.stop_run,QStyle.StandardPixmap.SP_MediaStop);self.stop_button.setEnabled(False)
@@ -158,6 +162,7 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         actions.addSpacing(8)
         self.info_button=button('案例信息',None,QStyle.StandardPixmap.SP_FileDialogInfoView)
         self.info_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.about_button=button('关于与诊断',lambda:show_about(self),QStyle.StandardPixmap.SP_MessageBoxInformation)
         actions.addSpacing(10)
         self.case_title_label=QLabel('案例标题');actions.addWidget(self.case_title_label)
         self.title_edit=QLineEdit(self.header_bar);self.title_edit.setMinimumWidth(150);self.title_edit.setMaximumWidth(280)
@@ -269,6 +274,8 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         self.language.setCurrentIndex(self.language.findData(self.ui_language))
         self.language.currentIndexChanged.connect(self.change_language)
         self.change_language()
+        if not self.settings.value('setup/v090_seen',False,type=bool):
+            QTimer.singleShot(300,self.first_setup)
 
     def change_language(self,*args):
         self.ui_language=self.language.currentData()
@@ -278,33 +285,34 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         for combo in (self.geometry,self.mode_controls['case_e0'],self.mode_controls['case_alpha'],self.potential_combo,self.binding_combo):
             combo.set_language(self.ui_language)
         self.help_view.set_language(self.ui_language)
-        self.engine_button.setToolTip(self.raw_text('选择外部计算内核目录\n未配置内核时仍可编辑，但不能运行。','Select external engine directory\nWithout an engine, editing is available but running is disabled.'))
+        self.engine_button.setToolTip(self.raw_text('内核与数据设置：分别选择程序、材料表和结果目录。','Engine and data settings: select executable, tables and results separately.'))
+        self.about_button.setToolTip(self.raw_text('关于与诊断','About and diagnostics'))
         self.refresh();self.results_view.redraw()
 
-    def configure_material_table(self,root):
-        table=Path(root)/'work'/'tables'/'table1'
-        case_model_module.configure_material_table(table)
+    def configure_material_table(self,directory):
+        table=Path(directory)/'table1' if directory else None
         element_picker_module.TABLE_PATH=table
+        case_model_module.configure_material_table(table)
 
-    def configure_engine(self):
-        current=str(self.engine_root) if self.engine_root else str(Path.home())
-        path=QFileDialog.getExistingDirectory(self,self.raw_text('选择外部计算内核目录','Select external engine directory'),current)
-        if not path:return
-        root=Path(path).resolve();self.engine_root=root;self.settings.setValue('engine/root',str(root));self.configure_material_table(root)
-        runner=next((root/name for name in ('run-case-precision.sh','run-case.sh') if (root/name).exists()),None)
-        table=root/'work'/'tables'/'table1'
-        if runner and table.exists():
-            self.statusBar().showMessage(self.raw_text('外部内核已配置：','External engine configured: ')+str(root),8000)
-        else:
-            self.statusBar().showMessage(self.raw_text('已保存内核目录，但未找到运行脚本或材料表。','Engine directory saved, but runner or material table is missing.'),9000)
+    def first_setup(self):
+        self.settings.setValue('setup/v090_seen',True)
+        self.configure_engine(first=True)
 
-    def engine_runner(self):
-        root=self.engine_root
-        if root is None:raise ValueError(self.raw_text('未配置外部计算内核。请先点击“内核设置”。','No external engine is configured. Click Engine settings first.'))
-        runner=next((root/name for name in ('run-case-precision.sh','run-case.sh') if (root/name).exists()),None)
-        table=root/'work'/'tables'/'table1'
-        if runner is None or not table.exists():raise ValueError(self.raw_text('内核目录缺少运行脚本或 work/tables/table1，无法计算。','The engine directory lacks a runner or work/tables/table1; calculation cannot start.'))
-        return root,runner
+    def configure_engine(self,checked=False,first=False):
+        if self.process:
+            QMessageBox.information(self,self.raw_text('计算运行中','Calculation running'),self.raw_text('请等待计算结束再更改内核或材料设置。','Wait until the calculation ends before changing engine or table settings.'));return
+        dialog=EngineDialog(self,first)
+        if dialog.exec()==EngineDialog.DialogCode.Accepted:
+            self.engine_config=dialog.config;self.engine_config.save(self.settings)
+            self.configure_material_table(self.engine_config.tables)
+            self.runtime_errors=[];self.refresh()
+            self.statusBar().showMessage(self.raw_text('设置已保存，运行时将重新检查。','Settings saved. Preflight will check them again before running.'),8000)
+
+    def update_run_availability(self,inputs_valid):
+        issues=basic_errors(self.engine_config)+self.runtime_errors
+        self.run_button.setEnabled(inputs_valid and not issues and self.process is None)
+        self.run_button.setToolTip(self.raw_text('运行当前输入','Run current inputs') if not issues else
+            self.raw_text('仅编辑模式。点击“内核设置”：\n','Editing mode. Open Engine settings:\n')+'\n'.join(issues))
 
     def changed(self,*args):
         if not self.loading: self.dirty=True; self.timer.start()
@@ -481,13 +489,6 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
                 self.color_species.blockSignals(True); self.color_species.clear(); self.color_species.addItems(d['symbol'])
                 self.color_species.setCurrentIndex(max(0,self.color_species.findText(selected))); self.color_species.blockSignals(False)
             errors,warnings,stats=validate(d,fig)
-            known=Path(__file__).parent/'verification-v02'/'engine-runs.json'
-            if known.exists():
-                try:
-                    for record in json.loads(read_text(known)):
-                        if self.source is not None and record['case']==self.source.name and record.get('classification')=='native_kernel_error':
-                            warnings.append('此源案例最近短程试算触发内核错误：'+record.get('engine_diagnostic','详见运行日志')+'；导入与原样保存不受影响。')
-                except (ValueError,OSError,KeyError): pass
             self.mode_note.setText(GEOMETRIES.get(int(d['case_geo']),'高级几何')+' · '+('动态' if d['tar_dynamic'] else '静态'))
             for key in ('pr_amp','pr_wl'): self.edits[key].setEnabled(int(d['case_geo']) in (24,25,27))
             self.edits['z_start'].setEnabled(int(d['case_start'])!=1)
@@ -501,7 +502,7 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
                     f"总注量 {fmt(d['flc'])} ions/Å²（{d['flc']*1e16:.3g} ions/cm²）")
                 self.draw(d,fig,stats)
                 self.target_editor.sync(d,fig,stats)
-            self.save_button.setEnabled(not errors); self.run_button.setEnabled(not errors and self.process is None)
+            self.save_button.setEnabled(not errors); self.update_run_availability(not errors)
         except Exception as e:
             errors=[str(e)]
             self.check_output.setPlainText('输入尚不完整：'+str(e)); self.save_button.setEnabled(False); self.run_button.setEnabled(False)
@@ -704,7 +705,7 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         except Exception as error:QMessageBox.warning(self,self.raw_text('保存失败','Save failed'),str(error))
 
     def save_case(self):
-        parent=self.source.parent if self.source is not None else ROOT/'work'/'cases'
+        parent=self.source.parent if self.source is not None else documents_root()/'Cases'
         default=parent/(self.case_basename()+'_gui_'+datetime.now().strftime('%m%d_%H%M%S'))
         path,_=QFileDialog.getSaveFileName(self,'输入新的案例文件夹名称（不覆盖已有目录）',str(default),'案例目录 (*)')
         if not path:return
@@ -714,28 +715,31 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
             QMessageBox.information(self,self.raw_text('保存成功','Saved'),self.raw_text('已生成输入文件并切换到新案例：\n','Input files saved; new case is now active:\n')+str(out))
         except Exception as error:QMessageBox.warning(self,self.raw_text('保存失败','Save failed'),str(error))
 
-    @staticmethod
-    def linux_path(path):
-        path=Path(path).resolve(); drive=path.drive
-        if len(drive)!=2 or drive[1]!=':': raise ValueError('运行目录需位于本地盘符路径中。')
-        return '/mnt/'+drive[0].lower()+path.as_posix()[2:]
-
     def run_case(self):
         if self.process: return
-        self.run_progress.reset_run()
         try:
-            self.checked_inputs()
-            engine_root,runner=self.engine_runner()
-            if not shutil.which('wsl.exe'): raise ValueError('未找到 wsl.exe，请先检查 WSL 安装。')
-            destination=engine_root/'work'/'runs'/(datetime.now().strftime('%Y%m%d_%H%M%S_%f')+'_GUI_'+self.case_basename())
+            tri,figtext,warnings=self.checked_inputs();data,_=self.collect()
+            run_namelist=Namelist(tri)
+            for key in ('inel0','isot'):
+                if key in run_namelist.fields:data[key]=run_namelist.get(key)
+            if not preflight(self,self.engine_config,data,warnings):return
+            self.run_progress.reset_run()
+            destination=Path(self.engine_config.results)/(datetime.now().strftime('%Y%m%d_%H%M%S_%f')+'_GUI_'+self.case_basename())
             self.write_case(destination); self.run_directory=destination; self.stop_requested=False
+            stage_tables(self.engine_config,destination)
+            # Only the private run copy receives a portable path to its table snapshot.
+            run_tri=read_text(destination/'tri.inp')
+            atomic_write_text(destination/'tri.inp',Namelist(run_tri).patch({'tableinp':"'./_tables'"}))
             atomic_write_text(destination/'stop_run.inp','0\n',encoding='ascii')
-            self.log.clear(); self.log.appendPlainText('运行目录：'+str(destination)+'\n正在启动 Ubuntu / 单进程计算…\n')
+            program,arguments=launch_command(self.engine_config,destination)
+            self.log.clear(); self.log.appendPlainText(self.raw_text('运行目录：','Run directory: ')+str(destination)+'\n'+self.raw_text('正在启动所选内核 / 单进程计算…','Starting selected engine / single-process calculation…')+'\n')
             self.log_file=(destination/'run.log').open('wb'); self.decoder=codecs.getincrementaldecoder('utf-8')(errors='replace')
             self.process=QProcess(self); self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+            environment=QProcessEnvironment.systemEnvironment();environment.insert('WSL_UTF8','1');self.process.setProcessEnvironment(environment)
             self.process.readyReadStandardOutput.connect(self.read_log); self.process.finished.connect(self.finished); self.process.errorOccurred.connect(self.process_error)
             self.run_button.setEnabled(False); self.stop_button.setEnabled(True); self.results_button.setEnabled(True)
-            self.process.start('wsl.exe',['-d','Ubuntu','--exec','bash',self.linux_path(runner),self.linux_path(destination)])
+            self.process.setWorkingDirectory(str(destination))
+            self.process.start(program,arguments)
             self.tabs.setCurrentWidget(self.log); self.statusBar().showMessage('计算运行中；输入副本保存在独立结果目录。')
         except Exception as e:
             self.run_progress.set_state('failed')
@@ -762,7 +766,7 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
     def finished(self,code,status):
         self.read_log(); self.close_log()
         self.run_progress.feed(self.decoder.decode(b'',final=True),final=True)
-        text=read_text(self.run_directory/'run.log') if (self.run_directory/'run.log').exists() else ''
+        text=(self.run_directory/'run.log').read_bytes().decode('utf-8',errors='replace') if (self.run_directory/'run.log').exists() else ''
         bad=bool(re.search(r'\bERROR\b|Fortran runtime error|SIGSEGV|SIGFPE|(?<![A-Za-z])NaN(?![A-Za-z])',text,re.I))
         normal=(status==QProcess.ExitStatus.NormalExit and code==0 and not bad)
         success=(normal and 'hist_loop beendet' in text and (self.run_directory/'time_run.dat').exists())
@@ -801,6 +805,7 @@ def main():
     parser.add_argument('--results-dir',help=argparse.SUPPRESS)
     parser.add_argument('--target-editor',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--input-files',action='store_true',help=argparse.SUPPRESS)
+    parser.add_argument('--self-test',help=argparse.SUPPRESS)
     args=parser.parse_args()
     if sys.platform == 'win32':
         try:
@@ -808,14 +813,18 @@ def main():
         except (AttributeError, OSError):
             pass
     app=QApplication(sys.argv); app.setFont(QFont('Microsoft YaHei',10))
+    app.setApplicationName('SDTrimSP-2D_GUI');app.setOrganizationName('LocalResearchTools');app.setApplicationVersion(VERSION)
     icon_path=Path(__file__).parent/'assets'/'SDTrimSP-2D_GUI.ico'
     if icon_path.exists(): app.setWindowIcon(QIcon(str(icon_path)))
-    # 沿用既有锁路径，避免旧版本含未保存内容时被新版本重复启动。
-    lock=QLockFile(str(Path(__file__).parent/'session-v074.lock'))
-    if not lock.tryLock(0):
+    # Installed app directories may be read-only. Never close an existing GUI.
+    lock=QLockFile(str(state_root()/'session.lock'))
+    if not args.self_test and not lock.tryLock(0):
         QMessageBox.information(None,'工作台已打开','输入工作台已经在运行，请切换到现有窗口。首次启动可能需要稍候。')
         return 0
-    window=Window(Path(args.case) if args.case else None)
+    test_directory=tempfile.TemporaryDirectory(prefix='sd2d-self-test-') if args.self_test else None
+    test_settings=QSettings(str(Path(test_directory.name)/'settings.ini'),QSettings.Format.IniFormat) if test_directory else None
+    if test_settings:test_settings.setValue('setup/v090_seen',True)
+    window=Window(Path(args.case) if args.case else None,settings=test_settings)
     if args.target_editor:window.tabs.setCurrentWidget(window.target_editor)
     if args.input_files:window.tabs.setCurrentWidget(window.files_page)
     if args.results_dir:
@@ -826,6 +835,17 @@ def main():
         window.resize(min(1430,int(area.width()*.94)),min(920,int(area.height()*.9)))
         window.move(area.center()-window.rect().center())
     window.showMaximized()
+    if args.self_test:
+        def self_test():
+            from smoke_check import verify_window
+            try:
+                report=verify_window(window,Path(test_directory.name),Path(args.self_test))
+                atomic_write_text(Path(args.self_test),json.dumps(report,ensure_ascii=False,indent=2)+'\n')
+                window.dirty=False;window.close();app.exit(0)
+            except Exception:
+                atomic_write_text(Path(args.self_test),json.dumps({'ok':False,'traceback':traceback.format_exc()},ensure_ascii=False,indent=2)+'\n')
+                app.exit(1)
+        QTimer.singleShot(500,self_test)
     if args.capture:
         def capture():
             window.canvas.draw(); window.grab().save(str(Path(args.capture)))
@@ -835,4 +855,4 @@ def main():
 if __name__=='__main__':
     try: sys.exit(main())
     except Exception:
-        (Path(__file__).parent/'startup-error.log').write_text(traceback.format_exc(),encoding='utf-8'); raise
+        (state_root()/'startup-error.log').write_text(traceback.format_exc(),encoding='utf-8'); raise

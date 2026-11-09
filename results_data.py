@@ -1,4 +1,4 @@
-# Reused from D:/SDtrimspplot/helpers/sdtrimsp_2d.py; see PLOTTER-LICENSE.txt.
+# Adapted from SDtrimspplot helpers/sdtrimsp_2d.py; see PLOTTER-LICENSE.txt.
 """Local SDTrimSP-2D reader, verified against the supplied 3.01 package.
 
 Keep geometry, fluence, component order and the code's global normalization.

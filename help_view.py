@@ -38,7 +38,7 @@ class HelpView(QWidget):
         root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0)
         split=QSplitter(Qt.Orientation.Horizontal);root.addWidget(split,1);self.splitter=split
         left=QWidget();ll=QVBoxLayout(left);ll.setContentsMargins(12,14,12,12)
-        self.brand=QLabel('SDTrimSP-2D_GUI v0.8.6');self.brand.setStyleSheet('font-weight:bold;font-size:13pt;color:#136d92;');ll.addWidget(self.brand)
+        self.brand=QLabel('SDTrimSP-2D_GUI v0.9.0');self.brand.setStyleSheet('font-weight:bold;font-size:13pt;color:#136d92;');ll.addWidget(self.brand)
         self.search=QLineEdit();self.search.setClearButtonEnabled(True);ll.addWidget(self.search)
         self.tree=QTreeWidget();self.tree.setHeaderHidden(True);self.tree.setRootIsDecorated(False)
         self.tree.setIndentation(12);ll.addWidget(self.tree,1)

@@ -1,20 +1,27 @@
 # Check, run and stop
 
+## Installation and setup
+
+The Windows installer and portable ZIP bundle Python, Qt/PySide6, NumPy, pandas and Matplotlib. Start SDTrimSP-2D_GUI.exe or its shortcut. The source download uses start-gui.cmd to install dependencies on first use (Internet required).
+
+The computer icon opens Engine and data settings. Select the actual compiled engine and material tables directory separately; they may be on different drives. Scans suggest candidates for confirmation. No fixed drive, work/tables layout or run-case script is required. A Linux ELF executable requires WSL on Windows; a Windows PE executable requires native runtime libraries. Leave the WSL distribution blank to use the system default. Setup can be skipped for editing and viewing existing results.
+
 ## Before running
 
-Check species order, fractions, geometry bounds, mesh, auxiliaries and output switches. Errors block saving/running. Warnings may indicate engine-specific parameter handling and need review.
+Check species order, fractions, geometry, mesh, auxiliaries and output switches. Run preflight shows the input location, engine format, material directory, required table files, runtime checks and output location. Missing items are listed individually. Engine version is not inferred. Configure the correct executable, distribution or table directory and check again after changes.
 
-## Separate run copy
+## Independent results
 
-Run creates a separate directory in the local work area and calls the configured compatible engine with current valid inputs. Raw diagnostics remain visible; errors are not bypassed as success. Without an engine, the GUI cannot run calculations.
+Default output is Documents / SDTrimSP-2D / Runs under the current user. Choose another writable directory in settings if needed. Each calculation creates a unique folder with private input and material copies. Only the run copy's tableinp is set to ./_tables. Original cases and the external installation are preserved. Run copies include licensed data; do not publish them with the GUI.
 
 ## Stop and completion
 
-Request stop writes stop_run.inp=1. The engine checks at its existing interval (every 10 fluence steps), rather than being killed immediately. Wait for logged termination/completion before loading full outputs. Load current run results after it ends.
+Request stop writes stop_run.inp=1. The engine checks at its existing interval. Wait for logged completion before loading full outputs. Existing progress and completion checks retain their behavior.
+
+## About and diagnostics
+
+About and diagnostics displays GUI, Python and Qt versions, engine format and SHA-256 fingerprint. Engine version is marked not reported. Exported JSON excludes user names, paths, input contents and logs.
 
 ## Scientific checks
 
-Completion markers, errors and time_run.dat support execution checks. Also check statistics, fluence-step and mesh convergence, and model applicability. Initial sketches are not engine verification; short runs do not establish convergence.
-
-
-
+Successful execution does not establish statistical convergence or physical applicability. Check fluence, mesh, statistics and models separately. A preview is not an engine result.

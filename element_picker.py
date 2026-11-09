@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QVBoxLayout, QHBoxLayout,
     QGridLayout, QWidget, QLabel, QLineEdit, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QAbstractItemView, QDialogButtonBox)
 
-TABLE_PATH = Path(__file__).resolve().parent.parent/'work'/'tables'/'table1'
+TABLE_PATH = None
 SYMBOLS = ('H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn '
            'Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce '
            'Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At '
@@ -38,6 +38,7 @@ class Material:
 
     @property
     def description(self):
+        if self.mass is None:return '标准元素符号（未配置材料表）'
         if self.symbol in SPECIAL:
             return SPECIAL[self.symbol]
         if self.symbol != SYMBOLS[self.z-1]:
@@ -46,7 +47,10 @@ class Material:
 
 def read_materials(path=None):
     """主表之后的 old/new 和 also 段是说明，不能当成可选材料。"""
-    if path is None:path=TABLE_PATH
+    if path is None:
+        path=TABLE_PATH
+        if path is None or not Path(path).is_file():
+            return [Material(symbol,z,None,None,None) for z,symbol in enumerate(SYMBOLS,1)]
     entries = []
     seen = set()
     for line in Path(path).read_text(encoding='utf-8', errors='replace').splitlines():
@@ -132,9 +136,10 @@ class ElementDialog(QDialog):
         self.entries.horizontalHeader().setStretchLastSection(True)
         side.addWidget(self.entries,1)
         self.details=QLabel(); self.details.setWordWrap(True); side.addWidget(self.details)
-        note=QLabel('列表只提供本机 table1 的有效名称；材料变体不是同位素。\n'
+        note=QLabel(('未配置材料表：可选择标准元素符号进行编辑；运行前需用外部 table1 核验。' if any(m.mass is None for m in self.materials) else
+                    '列表只提供本机 table1 的有效名称；材料变体不是同位素。\n'
                     'H2 在此表中的质量与 D 相同（2.014083 u）。\n'
-                    '这里只选择单个表内条目，不自动展开天然同位素混合物。')
+                    '这里只选择单个表内条目，不自动展开天然同位素混合物。'))
         note.setWordWrap(True); layout.addWidget(note)
         self.button_box=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
         self.button_box.button(QDialogButtonBox.StandardButton.Ok).setText('使用所选条目')
@@ -152,7 +157,7 @@ class ElementDialog(QDialog):
         self.entries.setRowCount(0)
         for row,m in enumerate(entries):
             self.entries.insertRow(row)
-            for col,value in enumerate((m.symbol,f'{m.mass:g}',m.description)):
+            for col,value in enumerate((m.symbol,f'{m.mass:g}' if m.mass is not None else '—',m.description)):
                 item=QTableWidgetItem(value)
                 if col==0:
                     item.setData(Qt.ItemDataRole.UserRole,m.symbol);tint_species_item(item,m.symbol)
@@ -189,9 +194,10 @@ class ElementDialog(QDialog):
         symbol=item.data(Qt.ItemDataRole.UserRole) if item else None
         m=self.by_symbol.get(symbol)
         self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(m is not None)
-        self.details.setText((f'{m.symbol} · Z={m.z}\n质量：{m.mass:.6f} u\n'
+        self.details.setText((f'{m.symbol} · Z={m.z}\n'+('未配置材料表；此处不提供质量或密度数据。' if m.mass is None else
+            f'质量：{m.mass:.6f} u\n'
             f'质量密度：{m.density:g} g/cm³\n原子数密度：{m.atomic_density:g} atoms/Å³\n'
-            '数据来源：已配置的外部计算内核材料表') if m else '没有匹配的条目。')
+            '数据来源：已配置的外部计算内核材料表')) if m else '没有匹配的条目。')
         owner=self.parent()
         if owner is not None and hasattr(owner,'interface_language'):
             owner.interface_language.apply(self)

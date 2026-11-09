@@ -14,21 +14,18 @@ ELEMENTS = set(('H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr M
                 'Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce '
                 'Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At '
                 'Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr').split())
-# 以当前安装的材料表为准，接受 D、T、He3、C_g 等程序自身使用的名称。
-_table=Path(__file__).resolve().parents[1]/'work'/'tables'/'table1'
-if _table.exists():
-    for _line in _table.read_text(encoding='utf-8',errors='replace').splitlines():
-        _p=_line.split()
-        if len(_p)>=8 and re.fullmatch(r'\d+',_p[1]): ELEMENTS.add(_p[0])
+BASE_ELEMENTS=frozenset(ELEMENTS)
+_table=None
 
 def configure_material_table(path):
     """Use the material table supplied by the selected external engine."""
     global _table
-    _table=Path(path).resolve()
-    if not _table.exists():return
-    for line in _table.read_text(encoding='utf-8',errors='replace').splitlines():
-        parts=line.split()
-        if len(parts)>=8 and re.fullmatch(r'\d+',parts[1]):ELEMENTS.add(parts[0])
+    _table=Path(path).resolve() if path else None
+    ELEMENTS.clear();ELEMENTS.update(BASE_ELEMENTS)
+    if _table and _table.is_file():
+        from element_picker import read_materials
+        try:ELEMENTS.update(m.symbol for m in read_materials(_table))
+        except (OSError,ValueError):pass
 
 # 经 default_init.F90 核对的默认值；未编辑时不写回这些省略字段。
 DEFAULTS={'qu_max':1.,'qu_tar':0.,'e0_beam':0.,'alpha0':0.,'case_e0':0,
@@ -235,7 +232,8 @@ def validate(d, fig):
     if d['isbv'] in (5,7): errors.append('3.01版不支持 isbv=5 或7。')
     symbols=d['symbol']
     if len(set(symbols))!=len(symbols): errors.append('元素符号不能重复。')
-    if any(s not in ELEMENTS for s in symbols): errors.append('材料名未在当前材料表中找到；请核对大小写和别名（支持 D、T、C_g 等）。')
+    if _table and _table.is_file() and any(s not in ELEMENTS for s in symbols): errors.append('材料名未在当前材料表中找到；请核对大小写和别名（支持 D、T、C_g 等）。')
+    elif not _table and any(not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*',s) for s in symbols):errors.append('元素符号包含无效字符。 / Invalid characters in element symbols.')
     for key in ('qu_beam','qu_tar','qu_max'):
         if any(v<0 or v>1 for v in d[key]): errors.append(key+' 各分数必须在0～1之间。')
     for key in ('qu_beam','qu_tar'):

@@ -13,8 +13,8 @@ PAIRS = [
 ('SDTrimSP-2D  /  中文输入工作台','SDTrimSP-2D  /  Input Workbench'),
 ('3.01 内核 · 一维 / 平面 / 轮廓 / 矩形 / 余弦表面 · 扩展参数与附件保留 · 中文输入工作台 0.3',
  '3.01 engine · 1D / flat / profile / rectangles / cosine surface · Extended inputs preserved · Workbench 0.3'),
-('v0.8.5 · 保存更新当前案例；另存与运行使用新目录 · 预览为初始轮廓/分层示意，非内核运算结果',
- 'v0.8.5 · Save updates current case; Save as and run use new directories · Preview shows initial geometry, not simulation results'),
+('v0.9.0 · 保存更新当前案例；另存与运行使用新目录 · 预览为初始轮廓/分层示意，非内核运算结果',
+ 'v0.9.0 · Save updates current case; Save as and run use new directories · Preview shows initial geometry, not simulation results'),
 ('打开案例…','Open case…'),('另存为新案例…','Save as new case…'),('检查输入','Check input'),
 ('运行当前输入','Run input'),('请求停止','Request stop'),('打开结果目录','Open run folder'),
 ('显示长度单位','Length unit'),('本地示例','Local examples'),
@@ -119,6 +119,11 @@ PAIRS+=[('图像分类', 'Plot category'), ('全部图像', 'All plots'), ('二�
 PAIRS += [('碰撞势','Collision potential'),('表面结合能模型','Surface binding model'),('当前几何类型','Current geometry'),('入射组分','Incident species'),('入射角 / °','Incidence angle / °'),('入射角上限 / °','Angle upper limit / °'),('入射角中心 / °','Angle center / °')]
 PAIRS += [('元素','Elements'),('网格/基底/束流','Mesh / substrate / beam'),('凸起成分（原子分数）','Protrusion composition (atomic fractions)'),('网格宽度与间距','Grid width and spacing'),('基底设置','Substrate settings'),('束流设置','Beam settings'),('束流能量 / eV','Beam energy / eV'),('能量中心 / eV','Energy center / eV'),('温度能量 kT / eV','Thermal energy kT / eV')]
 PAIRS += [('内核设置','Engine settings')]
+PAIRS += [('关于与诊断','About and diagnostics'),
+ ('标准元素符号（未配置材料表）','Standard element symbol (no material table)'),
+ ('未配置材料表：可选择标准元素符号进行编辑；运行前需用外部 table1 核验。','No material table: standard symbols are available for editing; verify against external table1 before running.'),
+ ('未配置材料表；此处不提供质量或密度数据。','No material table configured; mass and density data are unavailable.'),
+ ('数据来源：已配置的外部计算内核材料表','Source: configured external engine material table')]
 ZH_TO_EN=dict(PAIRS)
 EN_TO_ZH={en:zh for zh,en in PAIRS}
 FRAGMENTS=[('同位素 / 材料条目','Isotope / material entries'),('搜索结果','Search results'),
