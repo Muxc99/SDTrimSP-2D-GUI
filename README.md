@@ -1,4 +1,4 @@
-# SDTrimSP-2D GUI v0.9.0
+# SDTrimSP-2D GUI v0.9.1
 
 A bilingual desktop editor for SDTrimSP-2D inputs, 2D target drawing and interactive result plots.
 
@@ -26,9 +26,12 @@ Setup can be skipped. The **computer icon** in the toolbar opens **Engine and da
 2. Select the **material tables directory** separately. Choose the folder containing table1 and its companion tables. The dialog also recognizes tables, work/tables, or a table1 path entered directly. Engine and tables may be on different drives.
 3. Select an independent **results directory**. Default: the current user's Documents / SDTrimSP-2D / Runs.
 4. A Linux ELF engine requires WSL on Windows and the Linux libraries required by that engine. Leave the distribution blank to use the user's default, or enter an installed distribution name. Native Windows x64 engines require their Windows runtime libraries.
+   For a Windows engine, **Windows runtime directory** can point to the matching DLL folder (for example, `ucrt64/bin` or `mingw64/bin` inside the engine installation). Leave it blank to detect a single nearby runtime automatically. If multiple toolchains are found, choose the matching one explicitly. Preflight and calculation use the same directories; system-wide PATH is not changed.
 5. Use **Check again** to verify materials and runtime. Before a run, the GUI shows input location, engine format, data location, required files, runtime checks and output location. Engine version is marked not reported when unavailable; no version is guessed.
 
 首次启动可跳过配置，继续编辑和查看结果。点击顶部**电脑图标**分别选择**内核程序、材料表目录、结果目录**，三者不必在同一位置。扫描结果需要手动确认。Linux 内核需 WSL；Windows 内核需对应运行库。运行前逐项显示缺项，不再要求固定盘符、目录结构或额外的 run-case.sh。
+
+Windows 内核若提示缺少 `libgfortran-5.dll`，将新增的 **Windows 运行库目录** 指向内核配套的 DLL 文件夹，例如安装目录下的 `ucrt64/bin`。留空会自动识别附近的运行库；存在多套时需手动选择。检查与运算采用相同目录，不修改系统全局 PATH。运行库应来自该内核的配套安装，GUI 不分发这些内核依赖。
 
 Each run receives independent input and table copies. Only the run copy's tableinp is changed to ./_tables. Original cases and external installations are preserved. Run folders can contain licensed data; do not upload them with GUI code.
 

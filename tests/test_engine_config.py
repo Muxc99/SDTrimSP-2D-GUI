@@ -5,7 +5,8 @@ import unittest
 import subprocess
 from unittest.mock import patch
 from engine_config import (EngineConfig,binary_kind,discover,normalize_tables,basic_errors,
-                           required_tables,stage_tables,launch_command,probe_runtime,command_output)
+                           required_tables,stage_tables,launch_command,probe_runtime,command_output,
+                           runtime_directories,engine_environment)
 
 class ExternalEngineTests(unittest.TestCase):
     def setUp(self):
@@ -49,6 +50,40 @@ class ExternalEngineTests(unittest.TestCase):
         result=subprocess.CompletedProcess([],0,b'/mnt/e/engine path',('wsl: proxy warning').encode('utf-16-le'))
         with patch('engine_config.subprocess.run',return_value=result):
             self.assertEqual(command_output(['wsl.exe']),'/mnt/e/engine path')
+    def test_windows_runtime_auto_detects_sibling_toolchain(self):
+        exe=self.root/'安装 空格'/'build'/'target.exe';exe.parent.mkdir(parents=True);exe.write_bytes(b'MZtest')
+        runtime=exe.parent.parent/'ucrt64'/'bin';runtime.mkdir(parents=True)
+        (runtime/'libgfortran-5.dll').touch()
+        config=EngineConfig(executable=str(exe))
+        self.assertEqual(runtime_directories(config),[exe.parent,runtime])
+        env=engine_environment(config,{'PATH':'original','KEEP':'yes'})
+        self.assertEqual(env['PATH'],os.pathsep.join([str(exe.parent),str(runtime),'original']))
+        self.assertEqual(env['KEEP'],'yes')
+    def test_explicit_runtime_overrides_auto_detection(self):
+        exe=self.root/'build'/'target.exe';exe.parent.mkdir();exe.write_bytes(b'MZtest')
+        runtime=self.root/'another drive runtime';runtime.mkdir()
+        config=EngineConfig(executable=str(exe),runtime=str(runtime))
+        self.assertEqual(runtime_directories(config),[exe.parent,runtime])
+        runtime.rmdir()
+        with self.assertRaisesRegex(ValueError,'does not exist'):runtime_directories(config)
+    def test_multiple_toolchains_require_explicit_selection(self):
+        exe=self.root/'build'/'target.exe';exe.parent.mkdir();exe.write_bytes(b'MZtest')
+        for toolchain in ('ucrt64','mingw64'):
+            p=self.root/toolchain/'bin';p.mkdir(parents=True);(p/'libgfortran-5.dll').touch()
+        with self.assertRaisesRegex(ValueError,'Multiple runtime'):runtime_directories(EngineConfig(str(exe)))
+    def test_linux_engine_ignores_windows_runtime(self):
+        exe=self.root/'target';exe.write_bytes(b'\x7fELFtest')
+        config=EngineConfig(str(exe),runtime=str(self.root/'not-present'))
+        self.assertEqual(runtime_directories(config),[])
+        self.assertEqual(engine_environment(config,{'PATH':'unchanged'})['PATH'],'unchanged')
+    def test_settings_migration_preserves_old_configuration(self):
+        from PySide6.QtCore import QSettings
+        settings=QSettings(str(self.root/'settings.ini'),QSettings.Format.IniFormat)
+        settings.setValue('engine/executable','old engine');settings.setValue('engine/distribution','Ubuntu')
+        config=EngineConfig.load(settings,self.root/'results')
+        self.assertEqual((config.executable,config.distribution,config.runtime),('old engine','Ubuntu',''))
+        config.runtime='selected runtime';config.save(settings)
+        self.assertEqual(EngineConfig.load(settings,self.root/'results').runtime,'selected runtime')
     @unittest.skipUnless(os.name=='nt','Windows WSL command construction')
     def test_paths_are_arguments_not_interpolated_shell(self):
         exe=self.root/'engine space'/'target.exe';exe.parent.mkdir();exe.write_bytes(b'\x7fELFtest')

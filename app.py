@@ -1,5 +1,9 @@
 """SDTrimSP-2D 中文输入工作台，使用现有 Fortran 内核。"""
 from __future__ import annotations
+import sys
+if '--probe-windows-runtime' in sys.argv:
+    from windows_runtime_probe import main as probe_main
+    sys.exit(probe_main(sys.argv[sys.argv.index('--probe-windows-runtime')+1:]))
 import codecs
 import argparse
 from datetime import datetime
@@ -47,13 +51,13 @@ from element_colors import element_colormap,tint_species_item,contrast_text
 from input_file_io import atomic_write_text,normalized_input_text
 from run_progress import RunProgress
 from app_paths import documents_root,state_root
-from engine_config import EngineConfig,discover,basic_errors,stage_tables,launch_command
+from engine_config import EngineConfig,discover,basic_errors,stage_tables,launch_command,engine_environment,external_dll_search
 from engine_dialog import EngineDialog,preflight,show_about
 import case_model as case_model_module
 import element_picker as element_picker_module
 
 ROOT=Path(__file__).resolve().parent.parent
-VERSION='0.9.0'
+VERSION='0.9.1'
 APP_TITLE='SDTrimSP-2D_GUI v'+VERSION
 DEFAULT_CASE=documents_root()/'Cases'
 UNITS={'Å':1., 'nm':10., 'μm':10000.}
@@ -735,11 +739,16 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
             self.log.clear(); self.log.appendPlainText(self.raw_text('运行目录：','Run directory: ')+str(destination)+'\n'+self.raw_text('正在启动所选内核 / 单进程计算…','Starting selected engine / single-process calculation…')+'\n')
             self.log_file=(destination/'run.log').open('wb'); self.decoder=codecs.getincrementaldecoder('utf-8')(errors='replace')
             self.process=QProcess(self); self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-            environment=QProcessEnvironment.systemEnvironment();environment.insert('WSL_UTF8','1');self.process.setProcessEnvironment(environment)
+            environment=QProcessEnvironment()
+            for key,value in engine_environment(self.engine_config).items():environment.insert(key,value)
+            self.process.setProcessEnvironment(environment)
             self.process.readyReadStandardOutput.connect(self.read_log); self.process.finished.connect(self.finished); self.process.errorOccurred.connect(self.process_error)
             self.run_button.setEnabled(False); self.stop_button.setEnabled(True); self.results_button.setEnabled(True)
             self.process.setWorkingDirectory(str(destination))
-            self.process.start(program,arguments)
+            with external_dll_search():
+                self.process.start(program,arguments)
+                # Ensure CreateProcess has completed before restoring the GUI DLL directory.
+                self.process.waitForStarted(3000)
             self.tabs.setCurrentWidget(self.log); self.statusBar().showMessage('计算运行中；输入副本保存在独立结果目录。')
         except Exception as e:
             self.run_progress.set_state('failed')

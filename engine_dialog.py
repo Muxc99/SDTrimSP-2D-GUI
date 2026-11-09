@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QFormLayout,QLabel,
     QLineEdit,QPushButton,QDialogButtonBox,QFileDialog,QPlainTextEdit,QComboBox,QMessageBox)
 from engine_config import (EngineConfig,binary_kind,normalize_tables,discover,basic_errors,
-                           probe_runtime,required_tables)
+                           probe_runtime,required_tables,runtime_directories)
 from app_paths import documents_root
 
 class EngineDialog(QDialog):
@@ -19,9 +19,12 @@ class EngineDialog(QDialog):
         self.resize(850,560);layout=QVBoxLayout(self);form=QFormLayout();layout.addLayout(form)
         self.fields={}
         rows=(('executable','内核程序','Engine executable'),('tables','材料表目录','Material tables directory'),
+              ('runtime','Windows 运行库目录（留空自动识别）','Windows runtime directory (blank = auto)'),
               ('results','结果目录','Results directory'),('distribution','WSL 发行版（留空为默认）','WSL distribution (blank = default)'))
         for key,zh,en in rows:
             edit=QLineEdit(getattr(owner.engine_config,key));self.fields[key]=edit
+            if key=='runtime':
+                edit.setPlaceholderText(self.trx('例如：内核安装目录下的 ucrt64/bin','For example: ucrt64/bin inside the engine installation'))
             row=QHBoxLayout();row.addWidget(edit,1)
             if key!='distribution':
                 b=QPushButton(self.trx('浏览…','Browse…'));b.clicked.connect(lambda checked=False,k=key:self.browse(k));row.addWidget(b)
@@ -80,6 +83,9 @@ class EngineDialog(QDialog):
 
     def check(self):
         config=self.values();errors=basic_errors(config);lines=list(errors)
+        if binary_kind(config.executable)=='windows':
+            try:lines.append(self.trx('Windows 运行库搜索目录：\n','Windows runtime search directories:\n')+'\n'.join(map(str,runtime_directories(config))))
+            except ValueError:pass  # Already reported by basic_errors.
         if config.tables and (Path(config.tables)/'table1').is_file():
             try:
                 from element_picker import read_materials
@@ -130,6 +136,9 @@ def preflight(owner,config,data,warnings):
           owner.raw_text('材料目录：','Tables: ')+config.tables,
           owner.raw_text('结果目录：','Results: ')+config.results,
           owner.raw_text('WSL 发行版：','WSL distribution: ')+(config.distribution or owner.raw_text('系统默认','System default'))]
+    if binary_kind(config.executable)=='windows':
+        try:rows.append(owner.raw_text('Windows 运行库搜索目录：\n','Windows runtime search directories:\n')+'\n'.join(map(str,runtime_directories(config))))
+        except ValueError:pass
     rows+=['']+details+['']+warnings+['']+errors
     if not errors:rows.append(owner.raw_text('检查通过。将使用当前输入的独立副本开始计算。','Checks passed. Start using a separate copy of the current inputs.'))
     report.setPlainText('\n'.join(rows))
@@ -147,11 +156,12 @@ def diagnostic_info(owner):
     digest=''
     if kind in ('linux','windows'):
         with Path(config.executable).open('rb') as f:digest=hashlib.file_digest(f,'sha256').hexdigest()
-    return {'gui_version':owner.VERSION if hasattr(owner,'VERSION') else '0.9.0',
+    return {'gui_version':owner.VERSION if hasattr(owner,'VERSION') else '0.9.1',
             'python_version':platform.python_version(),'pyside6_version':qt_version,
             'platform':sys.platform,'architecture':platform.machine(),'frozen':bool(getattr(sys,'frozen',False)),
             'engine_format':kind,'engine_version':'not reported','engine_sha256':digest,
             'wsl_distribution_configured':bool(config.distribution),
+            'windows_runtime_directory_configured':bool(config.runtime),
             'table_files_present':{name:(Path(config.tables)/name).is_file() for name in required_tables({})},
             'configuration_issues':len(basic_errors(config))}
 

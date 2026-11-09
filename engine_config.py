@@ -4,6 +4,8 @@ from pathlib import Path
 import os
 import shutil
 import subprocess
+import sys
+from contextlib import contextmanager
 
 @dataclass
 class EngineConfig:
@@ -11,14 +13,15 @@ class EngineConfig:
     tables: str = ''
     results: str = ''
     distribution: str = ''  # empty means the user's default WSL distribution
+    runtime: str = ''  # Windows engine DLL directory; empty enables local discovery
 
     @classmethod
     def load(cls,settings,default_results):
         return cls(*(str(settings.value('engine/'+key,default)) for key,default in (
-            ('executable',''),('tables',''),('results',str(default_results)),('distribution',''))))
+            ('executable',''),('tables',''),('results',str(default_results)),('distribution',''),('runtime',''))))
 
     def save(self,settings):
-        for key in ('executable','tables','results','distribution'):
+        for key in ('executable','tables','results','distribution','runtime'):
             settings.setValue('engine/'+key,getattr(self,key))
 
 def binary_kind(path):
@@ -60,6 +63,74 @@ def discover(roots,max_depth=4):
                     if binary_kind(p) in ('linux','windows'):binaries.append(str(p))
     return sorted(set(binaries)),sorted(set(tables))
 
+
+def runtime_candidates(executable):
+    """Only inspect nearby installation folders; do not mix global toolchains."""
+    if binary_kind(executable)!='windows':return []
+    folder=Path(executable).resolve().parent
+    found=[];seen={str(folder).casefold()}
+    for base in (folder,folder.parent):
+        for relative in ('ucrt64/bin','mingw64/bin','bin','runtime/bin','runtime','lib'):
+            candidate=base/relative
+            key=str(candidate).casefold()
+            if key in seen:continue
+            seen.add(key)
+            if candidate.is_dir() and any(candidate.glob('*.dll')):found.append(candidate)
+    # A Fortran runtime is a more specific match than an arbitrary bin folder.
+    fortran=[p for p in found if any(p.glob('libgfortran*.dll'))]
+    return fortran or found
+
+
+def runtime_directories(config):
+    if binary_kind(config.executable)!='windows':return []
+    folder=Path(config.executable).resolve().parent
+    if config.runtime:
+        chosen=Path(config.runtime).expanduser().resolve()
+        if not chosen.is_dir():
+            raise ValueError('Windows 运行库目录不存在。 / Windows runtime directory does not exist: '+str(chosen))
+        return list(dict.fromkeys((folder,chosen)))
+    # DLLs alongside the executable need no extra runtime directory.
+    if any(folder.glob('libgfortran*.dll')):return [folder]
+    candidates=runtime_candidates(config.executable)
+    if len(candidates)>1:
+        raise ValueError('找到多个运行库目录，请在设置中明确选择。 / Multiple runtime directories found; select one explicitly:\n'+
+                         '\n'.join(map(str,candidates)))
+    return [folder]+candidates
+
+
+def engine_environment(config,environ=None):
+    """Use the same external DLL path for preflight and the actual child process."""
+    env=dict(os.environ if environ is None else environ)
+    if binary_kind(config.executable)=='windows':
+        original=env.get('PATH','')
+        if getattr(sys,'frozen',False):
+            internal=Path(sys._MEIPASS).resolve()
+            original=os.pathsep.join(entry for entry in original.split(os.pathsep)
+                if entry and not Path(entry).resolve().is_relative_to(internal))
+        env['PATH']=os.pathsep.join([*map(str,runtime_directories(config)),original])
+    env['WSL_UTF8']='1'
+    return env
+
+
+@contextmanager
+def external_dll_search():
+    """PyInstaller's DLL directory must not be inherited by an external engine."""
+    if os.name!='nt' or not getattr(sys,'frozen',False):
+        yield;return
+    import ctypes
+    from ctypes import wintypes
+    kernel=ctypes.WinDLL('kernel32',use_last_error=True)
+    kernel.GetDllDirectoryW.argtypes=[wintypes.DWORD,wintypes.LPWSTR]
+    kernel.GetDllDirectoryW.restype=wintypes.DWORD
+    kernel.SetDllDirectoryW.argtypes=[wintypes.LPCWSTR]
+    kernel.SetDllDirectoryW.restype=wintypes.BOOL
+    size=kernel.GetDllDirectoryW(0,None)
+    previous=ctypes.create_unicode_buffer(size+1)
+    kernel.GetDllDirectoryW(len(previous),previous)
+    if not kernel.SetDllDirectoryW(None):raise ctypes.WinError(ctypes.get_last_error())
+    try:yield
+    finally:kernel.SetDllDirectoryW(previous.value or None)
+
 def wsl_prefix(config):
     return ['wsl.exe']+(['-d',config.distribution] if config.distribution else [])+['--exec']
 
@@ -92,6 +163,9 @@ def basic_errors(config):
     if kind=='linux' and os.name=='nt' and not shutil.which('wsl.exe'):
         errors.append('Linux 内核需要 WSL；本机未找到 WSL。 / A Linux engine requires WSL, which was not found.')
     if kind=='windows' and os.name!='nt':errors.append('Windows 内核需要 Windows。 / A Windows engine requires Windows.')
+    if kind=='windows':
+        try:runtime_directories(config)
+        except ValueError as e:errors.append(str(e))
     if not config.tables or not (Path(config.tables)/'table1').is_file():
         errors.append('材料目录中缺少 table1；可单独选择材料目录或 table1。 / Missing table1; select its directory separately.')
     if not config.results:errors.append('请选择结果保存目录。 / Select a results directory.')
@@ -108,28 +182,21 @@ def probe_runtime(config):
         script='out=$(ldd "$1" 2>&1); rc=$?; printf "%s\\n" "$out"; case "$out" in *"not found"*) exit 2;; *"not a dynamic executable"*|*"statically linked"*) exit 0;; esac; exit "$rc"'
         return command_output(wsl_prefix(config)+['sh','-c',script,'sd2d-check',p])
     if kind=='windows':
-        import ctypes
-        from ctypes import wintypes
-        import pefile
-        path=Path(config.executable).resolve()
-        try:
-            with pefile.PE(str(path),fast_load=True) as pe:
-                pe.parse_data_directories(directories=[1,13])
-                if pe.FILE_HEADER.Machine!=0x8664:
-                    raise ValueError('此 GUI 支持 Windows x64 内核；请选 64 位内核。 / Select a Windows x64 engine.')
-                imports={item.dll.decode('ascii') for name in ('DIRECTORY_ENTRY_IMPORT','DIRECTORY_ENTRY_DELAY_IMPORT') for item in getattr(pe,name,[])}
-        except pefile.PEFormatError as e:raise ValueError('Invalid Windows executable / 无效的 Windows 程序') from e
-        loader=ctypes.WinDLL('kernel32',use_last_error=True)
-        loader.LoadLibraryExW.argtypes=[wintypes.LPCWSTR,wintypes.HANDLE,wintypes.DWORD]
-        loader.LoadLibraryExW.restype=wintypes.HMODULE
-        loader.FreeLibrary.argtypes=[wintypes.HMODULE]
-        with os.add_dll_directory(str(path.parent)):
-            for dll in sorted(imports):
-                handle=loader.LoadLibraryExW(dll,None,0x1000)
-                if not handle:
-                    raise ValueError('缺少或无法加载运行库 / Missing or unloadable runtime library: '+dll)
-                loader.FreeLibrary(handle)
-        return 'Windows x64: import libraries checked (simulation not executed)'
+        import json
+        helper=([sys.executable,'--probe-windows-runtime'] if getattr(sys,'frozen',False) else
+                [sys.executable,str(Path(__file__).with_name('windows_runtime_probe.py'))])
+        args=helper+[str(Path(config.executable).resolve()),*map(str,runtime_directories(config))]
+        with external_dll_search():
+            try:
+                result=subprocess.run(args,env=engine_environment(config),stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,timeout=15,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+            except subprocess.TimeoutExpired as e:
+                raise ValueError('Windows 运行库检查超时。 / Windows runtime check timed out.') from e
+        try:report=json.loads(result.stdout.decode('utf-8'))
+        except (UnicodeError,ValueError) as e:
+            raise ValueError('运行库检查进程异常退出。 / Runtime checker exited unexpectedly: '+str(result.returncode)) from e
+        if result.returncode or not report['ok']:raise ValueError(report['message'])
+        return report['message']
     if kind=='linux':
         if not os.access(config.executable,os.X_OK):raise ValueError('Engine is not executable / 内核没有执行权限')
         return 'Linux executable'

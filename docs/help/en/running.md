@@ -6,6 +6,8 @@ The Windows installer and portable ZIP bundle Python, Qt/PySide6, NumPy, pandas 
 
 The computer icon opens Engine and data settings. Select the actual compiled engine and material tables directory separately; they may be on different drives. Scans suggest candidates for confirmation. No fixed drive, work/tables layout or run-case script is required. A Linux ELF executable requires WSL on Windows; a Windows PE executable requires native runtime libraries. Leave the WSL distribution blank to use the system default. Setup can be skipped for editing and viewing existing results.
 
+For Windows engines, select the matching DLL folder in **Windows runtime directory**, such as `ucrt64/bin` or `mingw64/bin` inside the engine installation. Leave it blank to detect a single nearby runtime. Multiple installations require an explicit choice. Preflight and calculation share these directories without modifying system-wide PATH. The checker reports dependency chains and Windows error codes: a DLL may exist but fail to load because of missing dependencies or an architecture mismatch. Linux engines ignore this setting.
+
 ## Before running
 
 Check species order, fractions, geometry, mesh, auxiliaries and output switches. Run preflight shows the input location, engine format, material directory, required table files, runtime checks and output location. Missing items are listed individually. Engine version is not inferred. Configure the correct executable, distribution or table directory and check again after changes.
