@@ -70,7 +70,8 @@ def runtime_candidates(executable):
     folder=Path(executable).resolve().parent
     found=[];seen={str(folder).casefold()}
     for base in (folder,folder.parent):
-        for relative in ('ucrt64/bin','mingw64/bin','bin','runtime/bin','runtime','lib'):
+        for relative in ('ucrt64/bin','mingw64/bin','ucrt/ucrt64/bin','ucrt/mingw64/bin',
+                         'mingw/ucrt64/bin','mingw/mingw64/bin','bin','runtime/bin','runtime','lib'):
             candidate=base/relative
             key=str(candidate).casefold()
             if key in seen:continue

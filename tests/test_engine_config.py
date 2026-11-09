@@ -59,6 +59,11 @@ class ExternalEngineTests(unittest.TestCase):
         env=engine_environment(config,{'PATH':'original','KEEP':'yes'})
         self.assertEqual(env['PATH'],os.pathsep.join([str(exe.parent),str(runtime),'original']))
         self.assertEqual(env['KEEP'],'yes')
+    def test_windows_runtime_auto_detects_nested_ucrt_toolchain(self):
+        exe=self.root/'SDTrimSP-2D'/'target.exe';exe.parent.mkdir(parents=True);exe.write_bytes(b'MZtest')
+        runtime=exe.parent/'ucrt'/'ucrt64'/'bin';runtime.mkdir(parents=True)
+        (runtime/'libgfortran-5.dll').touch()
+        self.assertEqual(runtime_directories(EngineConfig(executable=str(exe))),[exe.parent,runtime])
     def test_explicit_runtime_overrides_auto_detection(self):
         exe=self.root/'build'/'target.exe';exe.parent.mkdir();exe.write_bytes(b'MZtest')
         runtime=self.root/'another drive runtime';runtime.mkdir()

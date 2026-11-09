@@ -57,7 +57,7 @@ import case_model as case_model_module
 import element_picker as element_picker_module
 
 ROOT=Path(__file__).resolve().parent.parent
-VERSION='0.9.1'
+VERSION='0.9.2'
 APP_TITLE='SDTrimSP-2D_GUI v'+VERSION
 DEFAULT_CASE=documents_root()/'Cases'
 UNITS={'Å':1., 'nm':10., 'μm':10000.}

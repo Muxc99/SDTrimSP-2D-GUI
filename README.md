@@ -1,4 +1,4 @@
-# SDTrimSP-2D GUI v0.9.1
+# SDTrimSP-2D GUI v0.9.2
 
 A bilingual desktop editor for SDTrimSP-2D inputs, 2D target drawing and interactive result plots.
 

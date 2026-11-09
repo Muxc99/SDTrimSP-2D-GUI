@@ -1,4 +1,4 @@
-# SDTrimSP-2D_GUI v0.9.1
+# SDTrimSP-2D_GUI v0.9.2
 
 Edit inputs, draw targets and inspect outputs using the existing Fortran engine. Choose a topic on the left, search titles/content/parameter names, or jump using On this page. Copy Markdown for local notes. Help works offline.
 

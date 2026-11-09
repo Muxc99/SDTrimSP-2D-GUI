@@ -75,9 +75,16 @@ class EngineDialog(QDialog):
     def scan(self,roots):
         self.report.setPlainText(self.trx('正在查找…','Searching…'))
         binaries,tables=discover(roots)
-        for combo,paths in ((self.binary_choices,binaries),(self.table_choices,tables)):
+        for key,combo,paths in (('executable',self.binary_choices,binaries),('tables',self.table_choices,tables)):
+            current=self.fields[key].text().strip()
             combo.clear();combo.addItem(self.trx('请选择…','Select…'),'')
             for path in paths:combo.addItem(path,path)
+            match=next((i for i in range(1,combo.count()) if combo.itemData(i)==current),None)
+            if match is None and len(paths)==1:match=1
+            if match is not None:
+                combo.setCurrentIndex(match)
+                self.fields[key].setText(str(normalize_tables(combo.itemData(match))) if key=='tables'
+                                         else combo.itemData(match))
         self.report.setPlainText(self.trx('找到内核 {} 个、材料目录 {} 个。请在上方下拉框确认；也可分别浏览任意位置。',
                                          'Found {} engines and {} table directories. Confirm selections above or browse any location.').format(len(binaries),len(tables)))
 
@@ -156,7 +163,7 @@ def diagnostic_info(owner):
     digest=''
     if kind in ('linux','windows'):
         with Path(config.executable).open('rb') as f:digest=hashlib.file_digest(f,'sha256').hexdigest()
-    return {'gui_version':owner.VERSION if hasattr(owner,'VERSION') else '0.9.1',
+    return {'gui_version':owner.VERSION if hasattr(owner,'VERSION') else '0.9.2',
             'python_version':platform.python_version(),'pyside6_version':qt_version,
             'platform':sys.platform,'architecture':platform.machine(),'frozen':bool(getattr(sys,'frozen',False)),
             'engine_format':kind,'engine_version':'not reported','engine_sha256':digest,

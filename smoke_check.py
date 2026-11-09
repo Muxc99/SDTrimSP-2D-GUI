@@ -9,7 +9,7 @@ from engine_config import EngineConfig
 from element_picker import ElementDialog
 
 def verify_window(window,scratch,report_path):
-    assert window.windowTitle()=='SDTrimSP-2D_GUI v0.9.1'
+    assert window.windowTitle()=='SDTrimSP-2D_GUI v0.9.2'
     assert not window.run_button.isEnabled()
     assert window.save_button.isEnabled()
     assert window.open_button.icon().cacheKey()!=window.engine_button.icon().cacheKey()
@@ -20,7 +20,7 @@ def verify_window(window,scratch,report_path):
     case=window.write_case(scratch/'synthetic')
     assert (case/'tri.inp').is_file()
     info=diagnostic_info(window)
-    assert info['gui_version']=='0.9.1' and info['engine_format']=='missing'
+    assert info['gui_version']=='0.9.2' and info['engine_format']=='missing'
     assert all('path' not in key for key in info)
     dialog=EngineDialog(window)
     assert set(dialog.fields)=={'executable','tables','results','distribution','runtime'}
@@ -49,7 +49,7 @@ def verify_window(window,scratch,report_path):
         verify_native(window,json.loads(native.read_text(encoding='utf-8')))
         checks+=['Windows external DLL preflight','Windows child process DLL path',
                  'frozen DLL isolation','missing transitive DLL diagnostic']
-    return {'ok':True,'gui':'0.9.1','frozen':info['frozen'],'checks':checks}
+    return {'ok':True,'gui':'0.9.2','frozen':info['frozen'],'checks':checks}
 
 
 def verify_external(window,fixture,report_path):
