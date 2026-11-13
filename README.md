@@ -48,11 +48,18 @@ Each run receives independent input and table copies. Only the run copy's tablei
 
 These screenshots show the GUI and do not contain the external calculation kernel or its data.
 
-![Target editor](docs/images/target-editor.png)
-
-![Result plots](docs/images/result-plots.png)
-
-![Input and preview](docs/images/initial-preview.png)
+<table>
+<tr>
+<td><img src="docs/images/target-editor.png" alt="Target editor"></td>
+<td><img src="docs/images/result-plots.png" alt="Result plots"></td>
+<td><img src="docs/images/initial-preview.png" alt="Input and preview"></td>
+</tr>
+<tr>
+<td><img src="docs/images/target-editor-profile-legacy.png" alt="Target profile editing"></td>
+<td><img src="docs/images/result-plots-legacy.png" alt="Result plot example"></td>
+<td></td>
+</tr>
+</table>
 
 ## Run from source manually
 
@@ -80,10 +87,3 @@ The release uses Python 3.14 x64 and the pinned build dependencies. The build wr
 
 See PLOTTER-LICENSE.txt for the included plotting component. This notice does not license or redistribute the external SDTrimSP engine. Bundled Windows dependencies retain their included licenses.
 
-## Version 1.0.0
-
-This release restores editable `qu_max` concentration limits, expands the bilingual offline help, and keeps the engine, material tables, cases, results and official manual separate from the GUI distribution.
-
-## Contributors
-
-Muxc99 and Codex.
