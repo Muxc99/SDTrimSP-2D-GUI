@@ -47,6 +47,10 @@ def closed_outline(rows, half, bottom):
     top.append([half,float(np.interp(half,xs,zs))])
     return [[-half,bottom], *top, [half,bottom], [-half,bottom]]
 
+def visible_profile_indices(rows, half):
+    """Return source-row indices that lie inside the displayed target width."""
+    return [i for i, row in enumerate(rows) if -half-1e-8 <= row[0] <= half+1e-8]
+
 class SubstrateProfileEditor:
     def __init__(self, editor):
         self.editor=editor;self.owner=editor.owner
@@ -221,9 +225,11 @@ class SubstrateProfileEditor:
 
     def nearest(self,event):
         if not self.rows:return None
-        pixels=self.editor.ax.transData.transform(np.array(self.rows)/self.owner.factor)
+        data=self.data();indices=visible_profile_indices(self.rows,data['geo_x'])
+        if not indices:return None
+        pixels=self.editor.ax.transData.transform(np.array([self.rows[i] for i in indices])/self.owner.factor)
         d=np.hypot(pixels[:,0]-event.x,pixels[:,1]-event.y);i=int(np.argmin(d))
-        return i if d[i]<=11 else None
+        return indices[i] if d[i]<=11 else None
 
     def inside(self,event):
         if not self.rows or event.xdata is None:return False
@@ -313,9 +319,15 @@ class SubstrateProfileEditor:
         if rows and data is not None:
             f=self.owner.factor;closed=np.array(closed_outline(rows,data['geo_x'],data['geo_z']))/f
             line,=ax.plot(closed[:,0],closed[:,1],'-',lw=1.5,color='#e07a26',zorder=8);self.artists.append(line)
-            pts=np.array(rows)/f;nodes,=ax.plot(pts[:,0],pts[:,1],'o',ms=6,mfc='white',mec='#e07a26',zorder=9);self.artists.append(nodes)
-            if self.selected is not None and self.selected<len(rows):
-                x,z=pts[self.selected];dot,=ax.plot([x],[z],'o',ms=9,color='#138eb1',zorder=10);self.artists.append(dot)
+            visible=visible_profile_indices(rows,data['geo_x'])
+            pts=np.array([rows[i] for i in visible])/f
+            nodes,=ax.plot(pts[:,0],pts[:,1],'o',ms=6,mfc='white',mec='#e07a26',zorder=9);self.artists.append(nodes)
+            if self.selected is not None and self.selected<len(rows) and self.selected in visible:
+                # ``selected`` indexes the source rows, while ``pts`` only
+                # contains the visible subset.  Read the selected source row
+                # directly so hidden out-of-width rows cannot shift the marker.
+                x,z=np.array(rows[self.selected])/f
+                dot,=ax.plot([x],[z],'o',ms=9,color='#138eb1',zorder=10);self.artists.append(dot)
         text=self.tr('基底已选中\n拖动上边节点改轮廓；拖动侧边、底边和角点改尺寸。\n宽度绕中心调整，底边保持水平。','Substrate selected\nDrag upper nodes to reshape; drag sides, bottom or corners to resize.\nWidth stays centered and the bottom stays level.')
         if self.selected is not None and self.selected<len(rows):
             x,z=rows[self.selected];text+=f'\n#{self.selected+1}   x={fmt(x/self.owner.factor)}   z={fmt(z/self.owner.factor)} {self.owner.unit.currentText()}'

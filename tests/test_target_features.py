@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication,QTableWidgetItem
 from new_case import initial_inputs
 from case_model import inspect_input,Figure,validate,parse_layers
 from target_inputs import *
+from substrate_profile import visible_profile_indices
 
 def sample(geometry=26):
     files=initial_inputs('Synthetic target','He','W',100.,50.,10.,10.,1000.,0.,100.,geometry=geometry)
@@ -68,6 +69,13 @@ class FormatTests(unittest.TestCase):
         self.assertFalse(validate_auxiliary(d)[0])
         with self.assertRaises(ValueError):profile_from_columns('0 1\n-5 1\n5 0',d,10)
         with self.assertRaises(ValueError):profile_from_columns('-5 -5\n5 0',d,10)
+
+    def test_profile_display_filters_out_of_width_nodes_by_source_index(self):
+        rows=[[-200.,0.],[-100.,10.],[100.,0.],[250.,20.]]
+        self.assertEqual(visible_profile_indices(rows,100.),[1,2])
+        # A selected source row must remain addressable after filtering.
+        visible=visible_profile_indices(rows,100.)
+        self.assertEqual(rows[visible[-1]],[100.,0.])
 
     def test_cosine_periodicity_matches_engine_preflight_rule(self):
         from case_model import Profile
