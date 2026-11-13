@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.9.2"
+  #define AppVersion "1.0.0"
 #endif
 #ifndef PortableDir
   #define PortableDir "dist\SDTrimSP-2D_GUI"

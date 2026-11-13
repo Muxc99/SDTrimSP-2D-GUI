@@ -163,7 +163,7 @@ def diagnostic_info(owner):
     digest=''
     if kind in ('linux','windows'):
         with Path(config.executable).open('rb') as f:digest=hashlib.file_digest(f,'sha256').hexdigest()
-    return {'gui_version':owner.VERSION if hasattr(owner,'VERSION') else '0.9.2',
+    return {'gui_version':owner.VERSION if hasattr(owner,'VERSION') else '1.0.0',
             'python_version':platform.python_version(),'pyside6_version':qt_version,
             'platform':sys.platform,'architecture':platform.machine(),'frozen':bool(getattr(sys,'frozen',False)),
             'engine_format':kind,'engine_version':'not reported','engine_sha256':digest,

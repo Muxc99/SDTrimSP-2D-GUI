@@ -3,7 +3,8 @@ from bisect import bisect_left
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QCursor
-from PySide6.QtWidgets import QGroupBox, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMenu
+from PySide6.QtWidgets import (QGroupBox,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QMenu,QCheckBox,
+    QDialog,QDialogButtonBox,QFormLayout,QDoubleSpinBox)
 from case_model import Profile, number, fmt, surface_profile
 
 PROFILE_MODES = (24, 25)
@@ -57,7 +58,9 @@ class SubstrateProfileEditor:
         self.note=QLabel();self.note.setWordWrap(True);layout.addWidget(self.note)
         self.add_button=QPushButton();self.add_button.setCheckable(True)
         self.add_button.clicked.connect(lambda checked:self.editor.set_tool('brush' if checked else 'select'))
-        layout.addWidget(self.add_button)
+        controls=QHBoxLayout();controls.addWidget(self.add_button,1)
+        self.snap_grid=QCheckBox();self.snap_grid.setChecked(False);controls.addWidget(self.snap_grid)
+        layout.addLayout(controls)
         row=QHBoxLayout();layout.addLayout(row)
         self.delete_button=QPushButton();self.reset_button=QPushButton()
         row.addWidget(self.delete_button);row.addWidget(self.reset_button)
@@ -66,7 +69,7 @@ class SubstrateProfileEditor:
         self.count_label=QLabel();self.count_label.setWordWrap(True);layout.addWidget(self.count_label)
         self.encoding_label=QLabel();self.encoding_label.setWordWrap(True);layout.addWidget(self.encoding_label)
         layout.addStretch(1)
-        for b in (self.add_button,self.delete_button,self.reset_button):b.setProperty('tooltipDelayMs',500)
+        for b in (self.add_button,self.snap_grid,self.delete_button,self.reset_button):b.setProperty('tooltipDelayMs',500)
         self.panel.hide()
 
     @property
@@ -131,7 +134,9 @@ class SubstrateProfileEditor:
         self.panel.setTitle(self.tr('基底闭合轮廓','Closed substrate outline'))
         self.note.setText(self.tr('先点击基底显示手柄，再拖动节点、侧边或底边；点击空白处取消选择。','Click the substrate to show handles, then drag nodes, sides or bottom. Click outside to deselect.'))
         self.add_button.setText(self.tr('增加边上节点','Add node on edge'))
-        self.add_button.setToolTip(self.tr('点击按钮后，再点击上边界增加节点；拖动节点时吸附网格交点。','Activate, then click the upper edge to add a node. Drag nodes to snap to grid intersections.'))
+        self.add_button.setToolTip(self.tr('点击按钮后，再点击上边界增加节点；右键节点可精确编辑坐标。','Activate and click the upper edge to add a node. Right-click a node to edit exact coordinates.'))
+        self.snap_grid.setText(self.tr('吸附网格','Snap to grid'))
+        self.snap_grid.setToolTip(self.tr('开启后拖动节点会吸附到最近网格交点；默认关闭。','When enabled, dragged nodes snap to the nearest grid intersection. Off by default.'))
         self.add_button.setChecked(self.editor.tool=='brush')
         self.delete_button.setText(self.tr('删除选中节点','Delete node'));self.reset_button.setText(self.tr('恢复矩形','Reset rectangle'))
         self.reset_button.setToolTip(self.tr('将基础轮廓恢复为两个 z=0 的端点，可撤销。若 pr_amp 非零，附加余弦仍保留。','Reset the base profile to two endpoints at z=0. Undo is available. Nonzero pr_amp still adds cosine modulation.'))
@@ -189,6 +194,31 @@ class SubstrateProfileEditor:
         if i in (0,len(self.rows)-1):raise ProfileEditError('两端点不可删除；可上下拖动调整高度。','Endpoints cannot be deleted; drag them vertically to change height.')
         self.selected=None;self.commit([r[:] for j,r in enumerate(self.rows) if j!=i])
 
+    def set_node_position(self,index,x,z):
+        """Set a profile node in physical Angstroms; coordinates need not lie on the mesh."""
+        self.prepare()
+        if not 0<=index<len(self.rows):return
+        rows=[r[:] for r in self.rows];rows[index]=[float(x),float(z)]
+        rows=check_profile(rows,self.data())
+        self.selected=index;self.selected_shape=True;self.commit(rows)
+        self.retranslate();self.draw_overlay()
+
+    def edit_node_position(self,index):
+        if not 0<=index<len(self.rows):return
+        factor=self.owner.factor;unit=self.owner.unit.currentText()
+        dialog=QDialog(self.editor);dialog.setWindowTitle(self.tr('编辑节点坐标','Edit node coordinates'))
+        form=QFormLayout(dialog);x_input=QDoubleSpinBox();z_input=QDoubleSpinBox()
+        for widget in (x_input,z_input):
+            widget.setDecimals(6);widget.setRange(-1e9,1e9);widget.setKeyboardTracking(False)
+        x_input.setValue(self.rows[index][0]/factor);z_input.setValue(self.rows[index][1]/factor)
+        form.addRow(self.tr(f'x / {unit}',f'x / {unit}'),x_input)
+        form.addRow(self.tr(f'z / {unit}',f'z / {unit}'),z_input)
+        buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Ok|QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(self.tr('确定','OK'))
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(self.tr('取消','Cancel'))
+        buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject);form.addRow(buttons)
+        if dialog.exec()==QDialog.DialogCode.Accepted:self.set_node_position(index,x_input.value()*factor,z_input.value()*factor)
+
     def nearest(self,event):
         if not self.rows:return None
         pixels=self.editor.ax.transData.transform(np.array(self.rows)/self.owner.factor)
@@ -231,6 +261,9 @@ class SubstrateProfileEditor:
         if event.button==3:
             menu=QMenu(self.editor);add=menu.addAction(self.tr('在此增加边上节点','Add node on edge here'))
             add.setEnabled(self.edge_point(event) is not None);add.triggered.connect(lambda:self.action(lambda:self.add_on_edge(event)))
+            edit=menu.addAction(self.tr('编辑节点坐标…','Edit node coordinates…'))
+            edit.setEnabled(self.selected is not None)
+            if self.selected is not None:edit.triggered.connect(lambda:self.action(lambda:self.edit_node_position(self.selected)))
             delete=menu.addAction(self.tr('删除选中节点','Delete selected node'));delete.setEnabled(self.selected is not None and self.selected not in (0,len(self.rows)-1))
             delete.triggered.connect(lambda:self.action(self.delete_selected));self.menu=menu;menu.popup(QCursor.pos())
         elif self.editor.tool=='erase':self.delete_selected()
@@ -247,11 +280,13 @@ class SubstrateProfileEditor:
     def on_motion(self,event):
         if self.drag is None or event.inaxes is not self.editor.ax or event.xdata is None:return
         data=self.data();i=self.drag['index'];rows=[r[:] for r in self.drag['before']]
-        x=-data['geo_x']+round((event.xdata*self.owner.factor+data['geo_x'])/data['geo_dx'])*data['geo_dx']
-        z=round(event.ydata*self.owner.factor/data['geo_dz'])*data['geo_dz']
-        if i in (0,len(rows)-1):x=rows[i][0]
+        x=event.xdata*self.owner.factor;z=event.ydata*self.owner.factor
+        if self.snap_grid.isChecked():
+            x=-data['geo_x']+round((x+data['geo_x'])/data['geo_dx'])*data['geo_dx']
+            z=round(z/data['geo_dz'])*data['geo_dz']
+            if i in (0,len(rows)-1):x=rows[i][0]
         if (i>0 and x<=rows[i-1][0]) or (i<len(rows)-1 and x>=rows[i+1][0]):
-            self.editor.message('上边节点不能左右交叉或占用同一网格列。','Upper nodes cannot cross or share a grid column.');return
+            self.editor.message('上边节点不能左右交叉或与相邻节点重合。','Upper nodes cannot cross or overlap adjacent nodes.');return
         if z<=data['geo_z']:
             self.editor.message('上边节点须高于基底底边。','Upper nodes must stay above the substrate bottom.');return
         rows[i]=[x,z];self.drag['rows']=rows;self.draw_overlay(rows)

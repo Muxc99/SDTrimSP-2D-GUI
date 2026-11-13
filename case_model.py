@@ -34,7 +34,9 @@ DEFAULTS={'qu_max':1.,'qu_tar':0.,'e0_beam':0.,'alpha0':0.,'case_e0':0,
           'geo_dx':50.,'geo_dz':50.,'pr_amp':0.,'pr_wl':1.}
 EXTRA_DEFAULTS={'pr_amp':0.,'pr_wl':1.,'iq0':0,'iq0_surf':0,'l_clust':False,
                 'l_clust_read':False,'n_clust':1,'loutgas':False,
-                'l_two_comp':False,'l_alpha_rough_kor':False,'lmatrices':False}
+                'l_two_comp':False,'l_two_comp2':False,'l_two_comp3':False,
+                'two_comp':'','two_comp2':'','two_comp3':'','rhom':-1.,'rhom2':-1.,'rhom3':-1.,
+                'geo_imax':1,'l_alpha_rough_kor':False,'lmatrices':False}
 GEOMETRIES={10:'一维平面',20:'二维平面',24:'轮廓（0～总宽）',25:'轮廓（中心坐标）',
             26:'矩形结构 fig.inp',27:'余弦表面'}
 
@@ -218,6 +220,8 @@ def inspect_input(text):
         raw=n.get(k) if k in n.fields else [v]
         if len(raw)!=1: raise ValueError(k+' 必须是单值。')
         d[k]=raw[0]
+    for key,default in [('qu_clust',0.),('dns_0',-1.)]:
+        d[key]=n.get(key) if key in n.fields else [default]*int(ncp[0])
     d['_defaults']=[k for k in REQUIRED if k not in n.fields]
     return n,d
 
@@ -236,6 +240,10 @@ def validate(d, fig):
     elif not _table and any(not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*',s) for s in symbols):errors.append('元素符号包含无效字符。 / Invalid characters in element symbols.')
     for key in ('qu_beam','qu_tar','qu_max'):
         if any(v<0 or v>1 for v in d[key]): errors.append(key+' 各分数必须在0～1之间。')
+    if all(v<0.9999999 for v in d['qu_max']):
+        errors.append('qu_max 错误：至少一个组分须设为 1（不限制），否则内核无法初始化浓度上限。')
+    limited=sum(1e-7<v<0.9999999 for v in d['qu_max'])
+    if limited>2:errors.append('qu_max 错误：当前内核最多支持两个具有有限上限的组分。')
     for key in ('qu_beam','qu_tar'):
         if not math.isclose(sum(d[key]),1,abs_tol=1e-6): errors.append(key+' 原子分数之和必须为1。')
     for i,q in enumerate(d['qu_beam']):
@@ -245,6 +253,16 @@ def validate(d, fig):
         errors.append('半宽及网格间距须大于0，geo_z须小于0。')
         return errors,warnings,{}
     mode=int(d['case_geo']); start=int(d['case_start'])
+    if mode in (24,25,27) and d['pr_amp']>0.001:
+        width=2*d['geo_x'];period=d['pr_wl']
+        if period<=0:
+            errors.append('pr_amp>0 时，pr_wl 必须大于0。')
+        elif int(period)==0:
+            errors.append('周期错误：内核要求 int(pr_wl)>0；当前 pr_wl 小于 1 Å。')
+        else:
+            ratio=width/period;kernel_periods=int(width)//int(period)
+            if abs(ratio-kernel_periods)>0.001:
+                errors.append(f'几何 {mode} 周期错误：总宽 {fmt(width)} Å 与 pr_wl {fmt(period)} Å 不匹配（总宽/pr_wl={fmt(ratio)}，需为整数）。')
     nx=1 if mode==10 else 2*d['geo_x']/d['geo_dx']; nz=abs(d['geo_z'])/d['geo_dz']
     if mode==10:
         if not math.isclose(2*d['geo_x'],d['geo_dx'],abs_tol=.001): errors.append('一维模式要求 geo_dx=2×geo_x。')
@@ -259,7 +277,7 @@ def validate(d, fig):
     if beam>2*d['geo_x']+1e-8: errors.append('束斑宽度不能超过靶区总宽。')
     if start==4 and abs(d['x_start'])+beam/2>d['geo_x']+1e-8:
         warnings.append('束斑超出横向边界，程序可能周期映射；请核对是否符合意图。')
-    top=0.; occupied={}
+    top=(2510. if d['geo_x']<3000 else 25010.) if mode==28 else 0.; occupied={}
     if d['case_geo']==26:
         if fig is None: errors.append('case_geo=26 需要 fig.inp。')
         else:
@@ -297,11 +315,14 @@ def validate(d, fig):
                 else:
                     try: parse_layers(files[name],len(symbols))
                     except ValueError as exc: errors.append(name+'：'+str(exc))
-        if d.get('l_clust_read') and 'doped_zellen_2D.inp' not in files: errors.append('团簇读取模式缺少 doped_zellen_2D.inp。')
-    if d.get('l_clust'): warnings.append('已启用团簇：参数及附件参与计算；随机团簇位置由内核生成，预览不伪造其位置。')
+        if d.get('l_clust') and d.get('l_clust_read') and 'doped_zellen_2D.inp' not in files: errors.append('团簇读取模式缺少 doped_zellen_2D.inp。')
+    if d.get('l_clust'): warnings.append('已启用团簇：参数及附件参与计算；内置团簇采用内核固定布局；局部文件覆盖按网格显示。 / Built-in clusters use kernel-defined layouts; local overrides are shown by grid.')
     if d.get('iq0',0)>0 or d.get('iq0_surf',0)>0: warnings.append('已启用初始分层成分；截面显示连续轮廓/分层示意，内核按网格建靶。')
     if d.get('l_alpha_rough_kor'): warnings.append('已保留局部粗糙入射修正；箭头为参考方向，未逐点绘制局部修正。')
     if d.get('_defaults'): warnings.append('按源码采用省略字段默认值：'+', '.join(d['_defaults'])+'；未编辑时不会补写。')
+    from target_inputs import validate_auxiliary
+    extra_errors,extra_warnings=validate_auxiliary(d)
+    errors.extend(extra_errors);warnings.extend(extra_warnings)
     cells=round(nx)*math.ceil(nz); histories=d['maxhist']*d['nr_pproj']
     if cells>100000: warnings.append('基础网格超过10万，建议先做小规模试算；本界面未预测内存与运行时长。')
     if beam/d['geo_dx']>0 and histories/(beam/d['geo_dx'])<100:

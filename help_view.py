@@ -7,22 +7,27 @@ from PySide6.QtWidgets import (QWidget,QVBoxLayout,QHBoxLayout,QSplitter,QLineEd
 
 DOCS=Path(__file__).resolve().parent/'docs'/'help'
 TOPICS=(
- ('start','开始使用','Getting started',(
+ ('start','入门与案例','Getting started and cases',(
   ('overview','界面与快速开始','Overview and quick start'),
   ('cases','新建、打开与保存','Cases and saving'),
-  ('elements','元素、同位素与成分','Elements and composition'),
+  ('files','输入文件与高级参数','Input files and advanced parameters'),
  )),
- ('target','靶与束流','Target and beam',(
+ ('materials','元素与成分','Elements and composition',(
+  ('elements','元素、材料与成分','Elements, materials and composition'),
+ )),
+ ('target','靶结构与束流','Target structure and beam',(
   ('mesh','网格、基底与单位','Mesh, substrate and units'),
-  ('geometry','几何类型与轮廓文件','Geometry and profiles'),
-  ('blocks','26：绘制与编辑凸起块','26: protrusion editing'),
+  ('geometry','几何类型与轮廓文件','Geometry and profile files'),
   ('profile','24/25：基底轮廓编辑','24/25: outline editing'),
+  ('blocks','26：绘制与编辑凸起块','26: protrusion editing'),
+  ('target-features','靶材功能与局部成分','Target features and local composition'),
   ('beam','束流、能量与角度','Beam, energy and angle'),
   ('models','碰撞势与结合能模型','Potential and binding models'),
  )),
- ('run','计算与结果','Run and results',(
-  ('files','输入文本与高级参数','Input text and advanced parameters'),
+ ('run','计算运行','Running calculations',(
   ('running','检查、运行与停止','Check, run and stop'),
+ )),
+ ('results','结果查看与分析','Viewing and analyzing results',(
   ('results','结果图种与物理含义','Plots and physical quantities'),
   ('navigation','绘图交互与数据导出','Plot navigation and export'),
  )),
@@ -38,7 +43,7 @@ class HelpView(QWidget):
         root=QVBoxLayout(self);root.setContentsMargins(0,0,0,0)
         split=QSplitter(Qt.Orientation.Horizontal);root.addWidget(split,1);self.splitter=split
         left=QWidget();ll=QVBoxLayout(left);ll.setContentsMargins(12,14,12,12)
-        self.brand=QLabel('SDTrimSP-2D_GUI v0.9.2');self.brand.setStyleSheet('font-weight:bold;font-size:13pt;color:#136d92;');ll.addWidget(self.brand)
+        self.brand=QLabel('SDTrimSP-2D_GUI v1.0.0');self.brand.setStyleSheet('font-weight:bold;font-size:13pt;color:#136d92;');ll.addWidget(self.brand)
         self.search=QLineEdit();self.search.setClearButtonEnabled(True);ll.addWidget(self.search)
         self.tree=QTreeWidget();self.tree.setHeaderHidden(True);self.tree.setRootIsDecorated(False)
         self.tree.setIndentation(12);ll.addWidget(self.tree,1)

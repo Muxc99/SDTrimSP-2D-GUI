@@ -5,7 +5,7 @@ import unittest
 import subprocess
 from unittest.mock import patch
 from engine_config import (EngineConfig,binary_kind,discover,normalize_tables,basic_errors,
-                           required_tables,stage_tables,launch_command,probe_runtime,command_output,
+                           required_tables,stage_tables,apply_material_overrides,launch_command,probe_runtime,command_output,
                            runtime_directories,engine_environment)
 
 class ExternalEngineTests(unittest.TestCase):
@@ -26,6 +26,19 @@ class ExternalEngineTests(unittest.TestCase):
         copied=stage_tables(EngineConfig(tables=str(tables)),run)
         (copied/'table1').write_text('changed')
         self.assertEqual((tables/'table1').read_bytes(),b'original\n')
+
+    def test_material_overrides_modify_only_private_tables(self):
+        source=self.root/'tables';source.mkdir()
+        headers=''.join(f'! header {i}\n' for i in range(11))
+        original=headers+' W 74 183.84 19.3 0.063 1.0 5.0 0.0 0.0 0 0 0 3.0 400\n'
+        (source/'table1').write_text(original);(source/'table1a').write_text(original)
+        run=self.root/'run';run.mkdir();staged=stage_tables(EngineConfig(tables=str(source)),run)
+        apply_material_overrides(staged,[{'symbol':'W','mass':184.1,'density':18.7,'atomic_density':0.061}])
+        for name in ('table1','table1a'):
+            values=(staged/name).read_text().splitlines()[11].split()
+            self.assertEqual(values[:5],['W','74','184.1','18.7','0.061'])
+        self.assertEqual((source/'table1').read_text(),original)
+        self.assertEqual((source/'table1a').read_text(),original)
     def test_no_runner_required_and_missing_file_reported(self):
         exe=self.root/'bin'/'target.exe';exe.parent.mkdir();exe.write_bytes(b'\x7fELFtest')
         tables=self.root/'tables';tables.mkdir();(tables/'table1').write_text('table')

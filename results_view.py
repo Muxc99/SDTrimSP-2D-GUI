@@ -15,6 +15,7 @@ from extended_results import ExtendedResults,EXTRA_KINDS,EXTRA_KEYS,EN,REQUIRES
 from results_analysis import OPTIONAL_NAMES,extend_dataset
 from element_colors import element_colormap
 from results_maps import ResultMaps
+from surface_paths import surface_path
 
 KINDS=[('fraction','元素原子分数'),('density','元素数密度'),('total_density','总原子数密度'),
        ('surface','表面轮廓对比'),('local','局部反射与溅射贡献'),('totals','反射系数与溅射产额随注量')]
@@ -159,15 +160,23 @@ class ResultsView(ResultMaps,ExtendedResults,QWidget):
                 self.note.setText(label('空白为无材料或无数据区域；不平滑，不自动归一化。','Blank areas have no material/data. No smoothing or renormalization.')+'\n'+warning)
                 ax.set_title(title+'\n'+self.snapshot_label(snap))
             elif kind=='surface':
-                frames=[]
+                frames=[];broken=[]
                 for item in self.surface_steps.selectedItems():
                     snap=data['surface'][item.data(Qt.ItemDataRole.UserRole)];df=snap['data']
-                    ax.plot(df.x_A*factor,df.z_A*factor,label=self.snapshot_label(snap))
-                    frames.append(df.assign(fluence_ions_A2=snap['fluence'],history=snap['history']))
+                    path,audit=surface_path(df)
+                    ax.plot(path[:,0]*factor,path[:,1]*factor,label=self.snapshot_label(snap))
+                    count=int((audit.break_reason!='').sum())
+                    if count:broken.append(str(snap['history'])+': '+str(count))
+                    frames.append(audit.assign(fluence_ions_A2=snap['fluence'],history=snap['history']))
                 if not frames:raise ValueError(label('请载入 surf.dat 并选择历史步。','Load surf.dat and select snapshots.'))
                 self.current_frame=pd.concat(frames,ignore_index=True);self.csv_name='2d_surface_comparison.csv'
                 ax.legend(fontsize=8);ax.set_title(label('表面轮廓对比','Surface profile comparison'))
-                self.note.setText(label('保持原始边界遍历顺序，保留垂直面；z 不是相对当前表面的深度。','Original boundary traversal order preserves vertical faces. z is the original coordinate, not depth below the current surface.'))
+                notes=[label('保持原始边界遍历顺序和垂直面，不跨接边界跳转；原始点全部保留。','Original traversal and vertical faces are preserved. Boundary jumps are not connected; all raw points are retained.')]
+                if broken:notes.append(label('已断开跨边界或非矩形边连接（历史步: 处数）：','Disconnected boundary/nonrectangular jumps (history: count): ')+', '.join(broken))
+                selected={int(frame.history.iloc[0]) for frame in frames if len(frame)}
+                bad=[str(s['history']) for s in data.get('invalid_cell_snapshots',[]) if s['history'] in selected]
+                if bad:notes.append(label('注意：历史步 ','Warning: histories ')+', '.join(bad)+label(' 的二维单元输出含无效边界；轮廓仅显示原始记录，不能据此确认靶几何有效。',' have invalid cell boundaries. Displaying raw surface records does not establish valid target geometry.'))
+                self.note.setText('\n'.join(notes))
             else:
                 snapshots=data.get('yield',[])
                 if not snapshots:raise ValueError('sputter_yield.dat required')

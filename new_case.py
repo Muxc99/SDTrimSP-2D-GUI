@@ -135,7 +135,7 @@ class NewCaseActions:
         _,d=inspect_input(payload['tri.inp']);fig=Figure.parse(payload['fig.inp'],int(d['ncp'])) if d['case_geo']==26 else None;d['_files']={k:v for k,v in payload.items() if k!='tri.inp'}
         errors,_,_=validate(d,fig)
         if errors:raise ValueError('\n'.join(errors))
-        self.timer.stop();self.raw_applying=True
+        self.timer.stop();self.removed_files.clear();self.raw_applying=True;self.reset_raw_history=True
         try:
             if not self.load_case(None,overrides=payload):return False
             e=self.target_editor;e.cancel_gesture();e.undo_stack.clear();e.redo_stack.clear();e.clipboard=None;e.selection_anchor=None;e.select_cells([]);e.fit_view();e.update_history_buttons()
@@ -143,7 +143,7 @@ class NewCaseActions:
             self.tabs.setCurrentWidget(e)
             self.statusBar().showMessage(self.raw_text('新建案例已就绪；绘制和编辑后请另存为新目录。','New case ready. Draw/edit, then save to a new folder.'),9000)
             return True
-        finally:self.raw_applying=False
+        finally:self.raw_applying=False;self.reset_raw_history=False
 
     def case_basename(self):
         if self.source is not None:return self.source.name

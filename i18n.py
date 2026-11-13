@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (QWidget,QLabel,QAbstractButton,QGroupBox,QComboBo
                               QTabWidget,QTableWidget,QLineEdit,QMessageBox)
 
 PAIRS = [
-('点击元素名或“…”选择元素；点击 × 删除，点击 ＋ 新增空白元素。其余数值直接编辑。','Click an element or ... to select a species; × removes it and + adds a blank entry. Edit other values directly.'),
+('点击元素名或“…”选择元素；点击 × 删除，点击 ＋ 新增空白元素。材料属性可直接编辑，仅用于当前运行，不修改原始材料表或案例输入。','Click an element or ... to select a species; × removes it and + adds a blank entry. Edit material properties directly; they apply only to this run and do not change the source table or case input.'),
 ('点击选择元素 / 同位素 / 材料条目','Click to select element / isotope / material'),
 ('添加空白元素','Add blank species'),('删除此元素','Remove this species'),
 ('请点击空白元素行的“…”选择元素。','Click ... in each blank species row to select an element.'),
@@ -13,15 +13,20 @@ PAIRS = [
 ('SDTrimSP-2D  /  中文输入工作台','SDTrimSP-2D  /  Input Workbench'),
 ('3.01 内核 · 一维 / 平面 / 轮廓 / 矩形 / 余弦表面 · 扩展参数与附件保留 · 中文输入工作台 0.3',
  '3.01 engine · 1D / flat / profile / rectangles / cosine surface · Extended inputs preserved · Workbench 0.3'),
-('v0.9.2 · 保存更新当前案例；另存与运行使用新目录 · 预览为初始轮廓/分层示意，非内核运算结果',
- 'v0.9.2 · Save updates current case; Save as and run use new directories · Preview shows initial geometry, not simulation results'),
+('v1.0.0 · 保存更新当前案例；另存与运行使用新目录 · 预览为初始轮廓/分层示意，非内核运算结果',
+ 'v1.0.0 · Save updates current case; Save as and run use new directories · Preview shows initial geometry, not simulation results'),
 ('打开案例…','Open case…'),('另存为新案例…','Save as new case…'),('检查输入','Check input'),
 ('运行当前输入','Run input'),('请求停止','Request stop'),('打开结果目录','Open run folder'),
 ('显示长度单位','Length unit'),('本地示例','Local examples'),
 ('载入所选案例','Load selected case'),('案例与元素 / 束流','Case, species and beam'),
 ('案例标题','Case title'),('分数均为原子分数（0～1）；束流和基底各自合计为1。','Atomic fractions (0–1); beam and substrate must each sum to 1.'),
 ('元素','Species'),('束流分数','Beam fraction'),('能量 / eV','Energy / eV'),('入射角 / °','Angle / °'),
-('基底分数','Substrate fraction'),('浓度上限','Fraction limit'),('选择元素 / 同位素…','Select element / isotope…'),
+('基底分数','Substrate fraction'),('浓度上限','Concentration limit (engine)'),('选择元素 / 同位素…','Select element / isotope…'),
+('原子质量 u','Atomic mass u'),('质量密度 g/cm³','Mass density g/cm³'),('原子数密度 atoms/Å³','Atomic number density atoms/Å³'),
+('浓度上限（内核）','Concentration limit (engine)'),
+('qu_max：动态靶中该组分允许达到的最高原子分数，范围 0～1。1 表示不设有限上限；当前内核最多支持两个 0<qu_max<1 的组分。','qu_max: maximum allowed target atomic fraction for this species in a dynamic target (0–1). 1 means no finite limit; this engine supports at most two species with 0<qu_max<1.'),
+('材料参数不完整','Incomplete material properties'),
+('请为以下组分填写大于0的原子质量、质量密度和原子数密度：','Enter positive atomic mass, mass density, and atomic number density for: '),
 ('添加元素','Add species'),('删除选中元素','Remove species'),('靶区 / 网格 / 入射位置','Target, mesh and incidence'),
 ('几何类型','Geometry'),('横向半宽','Lateral half-width'),('基底底部（负值）','Bottom z (negative)'),
 ('横向网格间距','Mesh spacing x'),('竖向网格间距','Mesh spacing z'),('束斑中心','Beam center x'),
@@ -124,9 +129,14 @@ PAIRS += [('关于与诊断','About and diagnostics'),
  ('未配置材料表：可选择标准元素符号进行编辑；运行前需用外部 table1 核验。','No material table: standard symbols are available for editing; verify against external table1 before running.'),
  ('未配置材料表；此处不提供质量或密度数据。','No material table configured; mass and density data are unavailable.'),
  ('数据来源：已配置的外部计算内核材料表','Source: configured external engine material table')]
+PAIRS += [('基底画笔成分（原子分数）','Substrate brush composition (atomic fractions)'),('靶材功能…','Target features…'),('分层成分编辑…','Layer composition editor…'),('保存','Save'),('撤销','Undo'),('重做','Redo'),('添加文件…','Add file…'),('导入文件…','Import file…'),('移除文件','Remove file'),('上一处','Previous'),('下一处','Next')]
 ZH_TO_EN=dict(PAIRS)
 EN_TO_ZH={en:zh for zh,en in PAIRS}
 FRAGMENTS=[('同位素 / 材料条目','Isotope / material entries'),('搜索结果','Search results'),
+           ('几何 ','Geometry '),(' 周期错误：总宽 ',' periodicity error: width '),
+           (' Å 与 pr_wl ',' A and pr_wl '),(' Å 不匹配（总宽/pr_wl=',' A are incompatible (width/pr_wl='),
+           ('，需为整数）。',', which must be an integer).'),
+           ('周期错误：内核要求 int(pr_wl)>0；当前 pr_wl 小于 1 Å。','Period error: the engine requires int(pr_wl)>0; current pr_wl is below 1 A.'),
            (' 个条目',' entries'),('质量：','Mass: '),('质量密度：','Mass density: '),
            ('原子数密度：','Atomic number density: '),('数据来源：本机','Source: local'),
            ('源案例：','Source case: '),('矩形结构 fig.inp','Rectangles fig.inp'),

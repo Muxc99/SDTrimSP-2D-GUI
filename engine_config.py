@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -228,6 +229,36 @@ def stage_tables(config,run_directory):
         if source.is_file() and (source.name.lower().startswith('table') or source.name.lower()=='tbsp.db'):
             shutil.copy2(source,destination/source.name)
     return destination
+
+def apply_material_overrides(table_directory,overrides,isbv=0):
+    """Apply per-run mass and density edits to private table snapshots only."""
+    root=Path(table_directory)
+    symbols={str(row['symbol']):row for row in overrides}
+    if not symbols:return
+    targets=[root/'table1']
+    if (root/'table1a').is_file():targets.append(root/'table1a')
+    active=root/('table1a' if int(isbv)==8 else 'table1')
+    if active not in targets:raise ValueError('当前结合能模型需要材料表 '+active.name+'，但运行副本中不存在。')
+    seen={symbol:set() for symbol in symbols}
+    for path in targets:
+        text=path.read_text(encoding='utf-8')
+        lines=text.splitlines(keepends=True)
+        for index,line in enumerate(lines):
+            if index<11 or not line.strip() or line.lstrip().startswith('!'):continue
+            matches=list(re.finditer(r'\S+',line))
+            if len(matches)<5:continue
+            symbol=matches[0].group()
+            if symbol not in symbols:continue
+            values=(symbols[symbol]['mass'],symbols[symbol]['density'],symbols[symbol]['atomic_density'])
+            replacements=(format(values[0],'.10g'),format(values[1],'.10g'),format(values[2],'.10g'))
+            for column,value in reversed(list(zip((2,3,4),replacements))):
+                span=matches[column].span()
+                line=line[:span[0]]+value+line[span[1]:]
+            lines[index]=line
+            seen[symbol].add(path.name)
+        path.write_text(''.join(lines),encoding='utf-8',newline='')
+    missing=[symbol for symbol in symbols if active.name not in seen[symbol]]
+    if missing:raise ValueError('所选材料未在运行副本材料表中找到：'+', '.join(missing))
 
 def launch_command(config,run_directory):
     exe=str(Path(config.executable).resolve())

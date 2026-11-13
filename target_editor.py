@@ -26,6 +26,8 @@ def tool_icon(name):
         p.setBrush(QColor('#d5e7f0'));p.drawPolygon(QPolygonF([QPointF(5,3),QPointF(20,14),QPointF(13,15),QPointF(10,22)]))
     elif name=='brush':
         p.drawLine(8,18,21,4);p.drawLine(5,16,11,22);p.setBrush(QColor('#d5e7f0'));p.drawEllipse(3,17,7,6)
+    elif name=='substrate_brush':
+        p.setPen(QPen(QColor('#12805a'),1.8));p.drawLine(8,16,21,3);p.drawLine(5,14,11,20);p.setBrush(QColor('#93d6bd'));p.drawEllipse(3,15,7,6);p.drawLine(3,24,23,24);p.drawLine(3,21,3,24);p.drawLine(23,21,23,24)
     elif name=='erase':
         p.drawLine(4,17,13,5);p.drawLine(13,5,22,12);p.drawLine(22,12,13,23);p.drawLine(13,23,4,17);p.drawLine(8,12,17,19)
     elif name=='rectangle':p.drawRect(4,6,18,14)
@@ -80,7 +82,7 @@ class TargetEditor(SelectionInspector,SelectionActions,QWidget):
         center=QHBoxLayout();dl.addLayout(center,1)
         tools=QVBoxLayout();tools.setSpacing(5);center.addLayout(tools)
         self.tool_buttons={};self.tool_group=QButtonGroup(self);self.tool_group.setExclusive(True)
-        labels=[('select','选择 / 框选（右键编辑，Alt+拖动移动）'),('brush','画笔：按网格涂绘'),
+        labels=[('select','选择 / 框选（右键编辑，Alt+拖动移动）'),('brush','画笔：按网格涂绘'),('substrate_brush','基底成分画笔：只编辑基底局部成分'),
                 ('erase','橡皮擦：删除整个凸起块，不擦除基底'),('rectangle','矩形：自动按网格切分'),
                 ('pan','平移画面')]
         for key,label in labels:
@@ -118,23 +120,34 @@ class TargetEditor(SelectionInspector,SelectionActions,QWidget):
         base=QGroupBox('基底成分（原子分数）');bl=QVBoxLayout(base)
         self.base_composition=QTableWidget(1,0);self.base_composition.setFixedHeight(72)
         self.base_composition.verticalHeader().hide();self.base_composition.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        bl.addWidget(self.base_composition);tl.addWidget(base);side.addWidget(top)
+        bl.addWidget(self.base_composition)
+        self.layers_button=QPushButton('靶材功能…');self.layers_button.clicked.connect(owner.edit_target_features);bl.addWidget(self.layers_button)
+        tl.addWidget(base);side.addWidget(top)
         lower=QGroupBox('凸起成分（原子分数）');self.block_settings=lower;ll=QVBoxLayout(lower);ll.setContentsMargins(7,12,7,6)
         self.brush_composition=QTableWidget(1,0);self.brush_composition.setFixedHeight(72)
         self.brush_composition.verticalHeader().hide();self.brush_composition.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         ll.addWidget(self.brush_composition)
-        row=QHBoxLayout();ll.addLayout(row)
+        self.substrate_settings=QWidget();sl=QVBoxLayout(self.substrate_settings);sl.setContentsMargins(0,0,0,0)
+        self.substrate_composition=QTableWidget(1,0);self.substrate_composition.setFixedHeight(72);self.substrate_composition.verticalHeader().hide();self.substrate_composition.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        sl.addWidget(self.substrate_composition);ll.addWidget(self.substrate_settings);self.substrate_settings.hide()
+        row=QHBoxLayout();ll.addLayout(row);self.composition_actions=[]
         for label,slot in [('采用基底成分',self.use_base),('采用选中块成分',self.use_selected)]:
-            button=QPushButton(label);button.clicked.connect(slot);row.addWidget(button)
+            button=QPushButton(label);button.clicked.connect(slot);row.addWidget(button);self.composition_actions.append(button)
         # 几何开关集中在画布上方；右侧只保留成分，明细表仍在独立页。
         ll.addStretch(1)
         side.addWidget(lower);side.setSizes([550,250]);split.addWidget(side);split.setSizes([960,430])
         self.splitter=split;self.sidebar=side
         self.profile_editor=SubstrateProfileEditor(self)
         self.rectangle_editor=SubstrateRectangleEditor(self)
+        from substrate_brush import SubstrateBrush
+        self.substrate_brush=SubstrateBrush(self)
         self.show_grid.toggled.connect(self.update_grid)
         self.color.currentTextChanged.connect(self.change_color)
         self.base_composition.itemChanged.connect(self.update_base)
+        # 右键直接编辑右侧成分表，和画布画笔使用同一套编辑器。
+        for table in (self.base_composition,self.brush_composition,self.substrate_composition):
+            table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            table.customContextMenuRequested.connect(lambda pos,t=table:self.show_composition_context_menu(t,pos))
         owner.blocks.itemSelectionChanged.connect(self.table_selection_changed)
         for event,handler in [('button_press_event',self.on_press),('motion_notify_event',self.on_motion),
                               ('button_release_event',self.on_release),('scroll_event',self.on_scroll),('key_press_event',self.on_key),('resize_event',self.on_resize),('figure_leave_event',self.on_canvas_leave),('draw_event',self.on_canvas_draw)]:
@@ -238,6 +251,14 @@ class TargetEditor(SelectionInspector,SelectionActions,QWidget):
         if self.owner.geometry.currentData()==26 and key!='select':
             self.substrate_selected=False;self.rectangle_editor.draw_overlay()
         if key in self.tool_buttons and self.tool_buttons[key].isCheckable():self.tool_buttons[key].setChecked(True)
+        local=key=='substrate_brush'
+        self.substrate_settings.setVisible(local);self.brush_composition.setVisible(not local)
+        self.block_settings.setTitle(self.text('基底画笔成分（原子分数）','Substrate brush composition (atomic fractions)') if local else self.text('凸起成分（原子分数）','Protrusion composition (atomic fractions)'))
+        for button in self.composition_actions:button.setVisible(not local)
+        if local:
+            self.deselect_substrate();self.substrate_composition.setEnabled(True)
+            self.message('基底成分画笔：左键拖动修改基底网格成分；右键设置成分或切换覆盖擦除。凸起保持不变。','Substrate brush: drag to paint substrate composition; right-click for fractions or override erasing. Protrusions are preserved.')
+            self.canvas.setCursor(Qt.CursorShape.CrossCursor);self.update_history_buttons();return
         if self.profile_editor.active:
             self.profile_editor.tool_changed(key)
             self.canvas.setCursor(Qt.CursorShape.OpenHandCursor if key=='pan' else Qt.CursorShape.CrossCursor if key!='select' else Qt.CursorShape.ArrowCursor)
@@ -291,19 +312,22 @@ class TargetEditor(SelectionInspector,SelectionActions,QWidget):
                 self.color.blockSignals(True);self.color.clear();self.color.addItems(symbols);self.color.blockSignals(False)
             self.color.blockSignals(True);self.color.setCurrentText(self.owner.color_species.currentText());self.color.blockSignals(False)
             old_symbols=[self.brush_composition.horizontalHeaderItem(i).text() for i in range(self.brush_composition.columnCount())]
-            for table in (self.base_composition,self.brush_composition):
+            for table in (self.base_composition,self.brush_composition,self.substrate_composition):
                 table.blockSignals(True);table.setColumnCount(len(symbols));table.setHorizontalHeaderLabels(symbols)
             for i,q in enumerate(data['qu_tar']):
                 self.base_composition.setItem(0,i,QTableWidgetItem(fmt(q)))
                 if old_symbols!=symbols or self.brush_composition.item(0,i) is None:
                     self.brush_composition.setItem(0,i,QTableWidgetItem(fmt(q)))
-            for table in (self.base_composition,self.brush_composition):
+                if old_symbols!=symbols or self.substrate_composition.item(0,i) is None:self.substrate_composition.setItem(0,i,QTableWidgetItem(fmt(q)))
+            for table in (self.base_composition,self.brush_composition,self.substrate_composition):
                 for i,symbol in enumerate(symbols):tint_species_item(table.item(0,i),symbol)
                 table.blockSignals(False)
             enabled=data['case_geo']==26
             profile=self.profile_editor.active
             for key in ('brush','erase','rectangle','delete'):self.tool_buttons[key].setEnabled(enabled or (profile and key!='rectangle'))
+            self.tool_buttons['substrate_brush'].setEnabled(data['case_geo'] in (10,20,24,25,26,27))
             labels={
+                'substrate_brush':('基底成分画笔：只修改基底局部成分','Substrate composition brush: edit substrate only'),
                 'select':('选择 / 拖动轮廓节点','Select / drag outline nodes') if profile else ('选择 / 框选（右键编辑，Alt+拖动移动）','Select / marquee (right-click edits; Alt+drag moves)'),
                 'brush':('增加边上节点','Add node on edge') if profile else ('画笔：按网格涂绘','Brush: paint grid cells'),
                 'erase':('删除上边界内部节点','Delete interior upper nodes') if profile else ('橡皮擦：删除整个凸起块，不擦除基底','Eraser: remove whole protrusion blocks; preserve substrate'),
@@ -320,7 +344,8 @@ class TargetEditor(SelectionInspector,SelectionActions,QWidget):
                 if view:self.ax.set_xlim(*view[0]);self.ax.set_ylim(*view[1])
                 self.layout_view(fit=view is None);self.update_grid();self.highlight_selection()
             language=getattr(self.owner,'ui_language','zh')
-            if enabled and previous_mode!=26:self.set_tool('select')
+            if self.tool=='substrate_brush':self.update_history_buttons()
+            elif enabled and previous_mode!=26:self.set_tool('select')
             elif profile and (previous_mode!=data['case_geo'] or language!=self.last_language):
                 self.profile_editor.tool_changed(self.tool)
             elif not enabled and (previous_mode!=data['case_geo'] or language!=self.last_language):
@@ -363,6 +388,20 @@ class TargetEditor(SelectionInspector,SelectionActions,QWidget):
         if not self.syncing:
             target=self.owner.species.item(item.column(),4)
             if target and target.text()!=item.text():target.setText(item.text())
+
+    def composition_context_menu(self,table):
+        from PySide6.QtWidgets import QMenu
+        from brush_menu import edit_brush,set_brush_table
+        menu=QMenu(table);tr=self.owner.raw_text
+        edit=menu.addAction(tr('编辑材料成分…','Edit material composition…'))
+        edit.triggered.connect(lambda:edit_brush(self,self.owner,table))
+        if table is self.brush_composition:
+            use=menu.addAction(tr('使用基底成分','Use substrate composition'))
+            use.triggered.connect(lambda:set_brush_table(table,self.data['qu_tar']))
+        return menu
+
+    def show_composition_context_menu(self,table,pos):
+        self.composition_context_menu(table).exec(table.viewport().mapToGlobal(pos))
 
     def use_base(self):
         for i in range(self.owner.species.rowCount()):self.brush_composition.setItem(0,i,QTableWidgetItem(self.owner.cell(self.owner.species,i,4)))
@@ -476,6 +515,17 @@ class TargetEditor(SelectionInspector,SelectionActions,QWidget):
             return
         self.canvas.setFocus();self.cancel_gesture()
         mode=self.owner.geometry.currentData()
+        if self.tool=='substrate_brush':
+            if event.button==3:self.substrate_brush.menu(event)
+            elif event.button==1:self.substrate_brush.begin(event)
+            elif event.button==2:self.gesture={'tool':'pan','pixel':(event.x,event.y),'view':(self.ax.get_xlim(),self.ax.get_ylim())}
+            return
+        if event.button==3 and mode==26 and self.tool in ('brush','rectangle','erase'):
+            point=(event.xdata*self.owner.factor,event.ydata*self.owner.factor)
+            from brush_menu import brush_menu
+            from PySide6.QtGui import QCursor
+            self.context_menu=brush_menu(self,self.owner,self.brush_composition,self.data,self.fig,point)
+            self.context_menu.popup(QCursor.pos());return
         # 24/25 的轮廓优先；26 先保留凸起工具、材料格和空白格的完整操作。
         if mode!=26 and self.rectangle_editor.active and self.rectangle_editor.action(lambda:self.rectangle_editor.on_press(event)):return
         if self.profile_editor.active and event.button!=2 and self.tool!='pan':
@@ -551,6 +601,11 @@ class TargetEditor(SelectionInspector,SelectionActions,QWidget):
         self.update_substrate_cursor(event)
         if event.inaxes is self.ax and event.xdata is not None:
             self.coordinate.setText(f'x = {event.xdata:.5g}    z = {event.ydata:.5g}    {self.owner.unit.currentText()}')
+        if self.substrate_brush.stroke is not None:
+            if event.inaxes is self.ax and event.xdata is not None:
+                try:self.substrate_brush.paint_to((event.xdata*self.owner.factor,event.ydata*self.owner.factor))
+                except ValueError as error:self.show_error(str(error));self.cancel_gesture()
+            return
         if self.profile_editor.active and self.profile_editor.drag is not None:
             self.profile_editor.action(lambda:self.profile_editor.on_motion(event));return
         if self.rectangle_editor.drag is not None:
@@ -619,6 +674,7 @@ class TargetEditor(SelectionInspector,SelectionActions,QWidget):
         self.canvas.setCursor(cursor)
 
     def on_release(self,event):
+        if self.substrate_brush.stroke is not None:self.substrate_brush.end(event);return
         if self.rectangle_editor.drag is not None:
             self.rectangle_editor.action(lambda:self.rectangle_editor.on_release(event));return
         if self.profile_editor.active and self.profile_editor.drag is not None:
@@ -683,6 +739,7 @@ class TargetEditor(SelectionInspector,SelectionActions,QWidget):
         self.owner.changed();self.owner.refresh();self.update_history_buttons()
 
     def delete_selected(self):
+        if self.tool=='substrate_brush':return
         if self.profile_editor.active:self.profile_editor.action(self.profile_editor.delete_selected);return
         if self.owner.geometry.currentData()!=26:return
         try:
@@ -691,7 +748,8 @@ class TargetEditor(SelectionInspector,SelectionActions,QWidget):
         except ValueError as error:self.show_error(str(error))
 
     def undo(self):
-        if self.profile_editor.active:self.profile_editor.action(self.profile_editor.undo);return
+        if self.local_history(False):return
+        if self.profile_editor.active and self.tool!='substrate_brush':self.profile_editor.action(self.profile_editor.undo);return
         if not self.undo_stack:return
         if isinstance(self.undo_stack[-1],dict) and self.undo_stack[-1].get('kind')=='substrate':
             item=self.undo_stack.pop()
@@ -704,7 +762,8 @@ class TargetEditor(SelectionInspector,SelectionActions,QWidget):
         self.update_history_buttons()
 
     def redo(self):
-        if self.profile_editor.active:self.profile_editor.action(lambda:self.profile_editor.undo(True));return
+        if self.local_history(True):return
+        if self.profile_editor.active and self.tool!='substrate_brush':self.profile_editor.action(lambda:self.profile_editor.undo(True));return
         if not self.redo_stack:return
         if isinstance(self.redo_stack[-1],dict) and self.redo_stack[-1].get('kind')=='substrate':
             item=self.redo_stack.pop()
@@ -716,13 +775,25 @@ class TargetEditor(SelectionInspector,SelectionActions,QWidget):
         except ValueError as error:self.redo_stack.append(item);self.show_error(str(error))
         self.update_history_buttons()
 
+    def local_history(self,redo):
+        source=self.redo_stack if redo else self.undo_stack;target=self.undo_stack if redo else self.redo_stack
+        if not source or not isinstance(source[-1],dict) or source[-1].get('kind')!='local':return False
+        item=source.pop()
+        try:
+            expected=item['before' if redo else 'after']
+            if self.substrate_brush.state()!=expected:raise ValueError(self.text('局部成分已变化，无法覆盖较新的修改。','Local composition has changed; cannot overwrite newer edits.'))
+            self.substrate_brush.apply(item['after' if redo else 'before']);target.append(item)
+        except ValueError as error:source.append(item);self.show_error(str(error))
+        self.update_history_buttons();return True
+
     def update_history_buttons(self):
         profile=self.profile_editor
-        self.tool_buttons['undo'].setEnabled(bool(profile.undo_stack if profile.active else self.undo_stack))
-        self.tool_buttons['redo'].setEnabled(bool(profile.redo_stack if profile.active else self.redo_stack))
+        self.tool_buttons['undo'].setEnabled(bool(profile.undo_stack if profile.active and self.tool!='substrate_brush' else self.undo_stack))
+        self.tool_buttons['redo'].setEnabled(bool(profile.redo_stack if profile.active and self.tool!='substrate_brush' else self.redo_stack))
 
     def cancel_gesture(self):
         self.gesture=None
+        if hasattr(self,'substrate_brush'):self.substrate_brush.cancel()
         if hasattr(self,'profile_editor'):
             was_dragging=self.profile_editor.drag is not None;self.profile_editor.cancel_drag()
             if was_dragging:self.profile_editor.draw_overlay()
@@ -757,7 +828,7 @@ class TargetEditor(SelectionInspector,SelectionActions,QWidget):
         elif key in ('ctrl+y','cmd+y','ctrl+shift+z'):self.redo()
         elif key=='escape':
             self.cancel_gesture();self.clipboard=None;self.paste_point=None;self.deselect_substrate();self.highlight_selection()
-        elif self.profile_editor.active and key in ('delete','backspace'):self.delete_selected()
+        elif self.profile_editor.active and self.tool!='substrate_brush' and key in ('delete','backspace'):self.delete_selected()
         elif self.tool=='select' and self.owner.geometry.currentData()==26:
             if key in ('delete','backspace'):self.delete_selected()
             elif key in ('ctrl+c','cmd+c'):self.copy_selection()

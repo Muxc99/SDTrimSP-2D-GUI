@@ -19,7 +19,15 @@ def save_input_files(owner):
         text=normalized_input_text(text)
         if target.exists() and read_text(target)==text:continue
         changed[name]=text
-    if not changed:return folder,None
+    removed={name for name in getattr(owner,'removed_files',set()) if name not in contents}
+    from input_editing import required_input_files
+    from case_model import inspect_input
+    _,data=inspect_input(tri)
+    for name in removed:
+        if Path(name).name!=name or not name.endswith('.inp') or name in required_input_files(data):
+            raise ValueError('不能移除必要输入文件 / Cannot remove required input: '+name)
+    removed={name for name in removed if (folder/name).is_file()}
+    if not changed and not removed:return folder,None
     backup=folder/'.gui-backups'/(datetime.now().strftime('%Y%m%d_%H%M%S_%f'));backup.mkdir(parents=True)
     old={};staged={};written=[]
     try:
@@ -30,6 +38,9 @@ def save_input_files(owner):
             temp.write_bytes(text.encode('utf-8'))
         for name,temp in staged.items():
             os.replace(temp,folder/name);written.append(name)
+        for name in removed:
+            target=folder/name;old[name]=target.read_bytes();(backup/name).write_bytes(old[name])
+            target.unlink();written.append(name)
     except Exception:
         for name in reversed(written):
             target=folder/name

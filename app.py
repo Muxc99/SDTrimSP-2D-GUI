@@ -51,13 +51,13 @@ from element_colors import element_colormap,tint_species_item,contrast_text
 from input_file_io import atomic_write_text,normalized_input_text
 from run_progress import RunProgress
 from app_paths import documents_root,state_root
-from engine_config import EngineConfig,discover,basic_errors,stage_tables,launch_command,engine_environment,external_dll_search
+from engine_config import EngineConfig,discover,basic_errors,stage_tables,apply_material_overrides,launch_command,engine_environment,external_dll_search
 from engine_dialog import EngineDialog,preflight,show_about
 import case_model as case_model_module
 import element_picker as element_picker_module
 
 ROOT=Path(__file__).resolve().parent.parent
-VERSION='0.9.2'
+VERSION='1.0.0'
 APP_TITLE='SDTrimSP-2D_GUI v'+VERSION
 DEFAULT_CASE=documents_root()/'Cases'
 UNITS={'Å':1., 'nm':10., 'μm':10000.}
@@ -107,6 +107,7 @@ from case_saving import save_input_files
 from PySide6.QtGui import QShortcut,QKeySequence
 
 class Window(NewCaseActions,InputEditing,QMainWindow):
+    VERSION=VERSION
     def __init__(self,case=None,settings=None):
         super().__init__()
         # 显式加载字体，保证无屏幕渲染检查和本机界面都能显示中文。
@@ -129,7 +130,7 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         self.raw_pending=set();self.raw_error=None;self.raw_applying=False
         self.process=None; self.run_directory=None; self.log_file=None; self.stop_requested=False
         self.last_export=None
-        self.files={}; self.aux_editors={}; self.error_history=[]
+        self.files={}; self.aux_editors={}; self.error_history=[];self.removed_files=set()
         before=Path(__file__).parent/'compatibility-before.json'
         if before.exists():
             try:
@@ -187,13 +188,14 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         splitter=DefaultSplitter(Qt.Orientation.Horizontal,'input');self.setup_splitter=splitter;setup_layout.addWidget(splitter)
         left=QWidget(); left_layout=QVBoxLayout(left); left_layout.setContentsMargins(0,0,8,0)
         box,lay=group('元素');self.elements_box=box;left_layout.addWidget(box)
-        self.species=QTableWidget(0,6)
-        self.species.setHorizontalHeaderLabels(['元素','束流分数','能量 / eV','入射角 / °','基底分数','浓度上限'])
-        # 能量/角度只在右侧束流区编辑；保留原数据列，避免改变文件数组和组分顺序。
-        self.species.setColumnHidden(2,True);self.species.setColumnHidden(3,True)
-        self.species.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.species=QTableWidget(0,9)
+        self.species.setHorizontalHeaderLabels(['元素','束流分数','能量 / eV','入射角 / °','基底分数','浓度上限','原子质量 u','质量密度 g/cm³','原子数密度 atoms/Å³'])
+        # Keep engine arrays in their original logical columns; energy and angle are edited in beam settings.
+        for column in (2,3):self.species.setColumnHidden(column,True)
+        self.species.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.species.horizontalHeader().setStretchLastSection(True)
         self.species.setMinimumHeight(175); self.species.setMaximumHeight(250); self.species.itemChanged.connect(self.changed); lay.addWidget(self.species)
-        self.species.setToolTip('点击元素名或“…”选择元素；点击 × 删除，点击 ＋ 新增空白元素。其余数值直接编辑。')
+        self.species.setToolTip('点击元素名或“…”选择元素；点击 × 删除，点击 ＋ 新增空白元素。材料属性可直接编辑，仅用于当前运行，不修改原始材料表或案例输入。')
         row=QHBoxLayout(); lay.addLayout(row)
         self.add_species_button=QPushButton('＋');self.add_species_button.setFixedSize(28,26)
         self.add_species_button.setStyleSheet('QPushButton {padding:0;font-size:16pt;}')
@@ -297,6 +299,19 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         table=Path(directory)/'table1' if directory else None
         element_picker_module.TABLE_PATH=table
         case_model_module.configure_material_table(table)
+        try:self.material_lookup={m.symbol:m for m in element_picker_module.read_materials(table)}
+        except (OSError,ValueError):self.material_lookup={}
+        if hasattr(self,'species'):
+            for row in range(self.species.rowCount()):
+                if self.cell(self.species,row,0) and any(not self.cell(self.species,row,col) for col in (6,7,8)):
+                    self.set_material_cells(row,self.cell(self.species,row,0))
+
+    def set_material_cells(self,row,symbol,values=None):
+        material=self.material_lookup.get(symbol) if values is None else None
+        if values is None:
+            values=(material.mass,material.density,material.atomic_density) if material else ('','','')
+        for column,value in zip((6,7,8),values):
+            self.set_cell(self.species,row,column,'' if value is None else fmt(value) if isinstance(value,(int,float)) else value)
 
     def first_setup(self):
         self.settings.setValue('setup/v090_seen',True)
@@ -328,11 +343,12 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
 
     def set_auxiliary_file(self,name,text):
         """更新内存附件和文本页；实际落盘仍走原来的保存/备份路径。"""
+        self.removed_files.discard(name)
         self.files[name]=text
         editor=self.aux_editors.get(name)
         if editor is None:
             editor=QPlainTextEdit();editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-            self.aux_editors[name]=editor;self.aux_tabs.addTab(editor,name);editor.textChanged.connect(self.changed)
+            self.aux_editors[name]=editor;self.aux_tabs.addTab(editor,name);editor.textChanged.connect(lambda n=name:self.raw_edited(n))
         blocked=editor.blockSignals(True)
         editor.setPlainText(text);editor.document().setModified(False);editor.blockSignals(blocked)
 
@@ -341,6 +357,8 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         if table is self.species and col==0:
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             item.setToolTip('点击选择元素 / 同位素 / 材料条目');tint_species_item(item,str(value))
+        elif table is self.species and col==5:
+            item.setToolTip(translated('qu_max：动态靶中该组分允许达到的最高原子分数，范围 0～1。1 表示不设有限上限；当前内核最多支持两个 0<qu_max<1 的组分。',getattr(self,'ui_language','zh')))
         table.setItem(row,col,item)
         if table is self.species and col==0:self.set_species_buttons(row,item)
 
@@ -377,18 +395,26 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         path=Path(path) if path is not None else None
         if path is not None and path.is_file():path=path.parent
         success=False
+        same_case=self.raw_applying and not getattr(self,'reset_raw_history',False)
         try:
             overrides=overrides or {}
             text=overrides['tri.inp'] if 'tri.inp' in overrides else read_text(path/'tri.inp'); nl,d=inspect_input(text)
             files={p.name:read_text(p) for p in path.iterdir() if p.is_file() and p.suffix.lower()=='.inp' and p.name.lower()!='tri.inp'} if path is not None else {}
             files.update({name:content for name,content in overrides.items() if name!='tri.inp'})
+            if same_case:
+                files={name:text for name,text in files.items() if name not in self.removed_files}
+            else:self.removed_files.clear()
             fig=Figure.parse(files.get('fig.inp',''),int(d['ncp'])) if d['case_geo']==26 else None
             self.raw_pending.clear();self.raw_error=None
+            preserved={self.cell(self.species,i,0):tuple(self.cell(self.species,i,j) for j in (6,7,8))
+                       for i in range(self.species.rowCount())} if same_case else {}
             self.loading=True; self.source=path.resolve() if path is not None else None; self.namelist=nl; self.data=d; self.figure=fig
             self.files=files
             self.title_edit.setText(text.splitlines()[0]); self.species.setRowCount(int(d['ncp']))
             for i in range(int(d['ncp'])):
                 for j,k in enumerate(ARRAY_KEYS): self.set_cell(self.species,i,j,d[k][i] if k=='symbol' else fmt(d[k][i]))
+                symbol=d['symbol'][i]
+                self.set_material_cells(i,symbol,preserved.get(symbol))
             for k in LENGTH_KEYS: self.edits[k].setText(fmt(d[k]/self.factor))
             for k in ('flc','maxhist','ihist_out','nr_pproj'): self.edits[k].setText(fmt(d[k]))
             self.dynamic.setChecked(bool(d['tar_dynamic'])); self.geometry.setCurrentIndex(self.geometry.findData(int(d['case_geo'])))
@@ -414,15 +440,23 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
                 self.set_cell(self.extra_table,row,0,key)
                 self.extra_table.item(row,0).setFlags(Qt.ItemFlag.ItemIsEnabled|Qt.ItemFlag.ItemIsSelectable)
                 self.set_cell(self.extra_table,row,1,nl.raw(key))
+            old_editors=self.aux_editors.copy() if same_case else {}
             self.aux_tabs.clear()
-            for editor in self.aux_editors.values():editor.deleteLater()
+            for name,editor in self.aux_editors.items():
+                if name not in old_editors:editor.deleteLater()
             self.aux_editors={}
-            self.aux_tabs.addTab(self.tri_preview,'tri.inp');self.aux_tabs.addTab(self.fig_preview,'fig.inp')
+            self.aux_tabs.addTab(self.tri_preview,'tri.inp')
+            if d['case_geo']==26 or 'fig.inp' in files:self.aux_tabs.addTab(self.fig_preview,'fig.inp')
             for name,content in sorted(files.items()):
                 if name=='fig.inp':continue
-                editor=QPlainTextEdit(); editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap); editor.setPlainText(content)
+                editor=old_editors.pop(name,None)
+                if editor is None:
+                    editor=QPlainTextEdit();editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+                    editor.textChanged.connect(lambda n=name:self.raw_edited(n))
+                if editor.toPlainText()!=content:editor.setPlainText(content)
                 editor.document().setModified(False)
-                editor.textChanged.connect(self.changed); self.aux_tabs.addTab(editor,name); self.aux_editors[name]=editor
+                self.aux_tabs.addTab(editor,name); self.aux_editors[name]=editor
+            for editor in old_editors.values():editor.deleteLater()
             self.error_history.append('成功载入：'+str(self.source)+'；几何 '+str(int(d['case_geo'])))
             self.statusBar().showMessage('案例已导入；原输入文件未修改。');success=True
         except Exception as e:
@@ -443,17 +477,18 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         extensions=self.extra_updates()
         effective,base=inspect_input(self.namelist.patch(extensions))
         d=dict(base); count=self.species.rowCount(); d['ncp']=count
+        # Omitted arrays follow the edited species count, not the source ncp.
+        # Explicit arrays are synchronized by species_dependencies and validated.
+        for key,default in (('dns_0',-1.),('qu_clust',0.)):
+            if key not in effective.fields:d[key]=[default]*count
         for j,k in enumerate(ARRAY_KEYS): d[k]=[self.cell(self.species,i,j) if k=='symbol' else number(self.cell(self.species,i,j)) for i in range(count)]
+        def optional_material_number(text):return number(text) if text else None
+        d['_material_overrides']=[{'symbol':self.cell(self.species,i,0),
+            'mass':optional_material_number(self.cell(self.species,i,6)),
+            'density':optional_material_number(self.cell(self.species,i,7)),
+            'atomic_density':optional_material_number(self.cell(self.species,i,8))} for i in range(count)]
         if any(not symbol for symbol in d['symbol']):
             raise ValueError(translated('请点击空白元素行的“…”选择元素。',getattr(self,'ui_language','zh')))
-        if d['symbol']!=self.data['symbol']:
-            dependent=[]
-            for key in self.namelist.fields:
-                if key in ARRAY_KEYS+LENGTH_KEYS+SCALAR_KEYS+('ncp','tttt'): continue
-                try:
-                    if len(self.namelist.get(key))>1: dependent.append(key)
-                except ValueError: pass
-            if dependent: raise ValueError('当前案例含扩展数组 '+', '.join(dependent)+'；请保持原元素顺序，或先在文本中同步处理这些数组。')
         for k in LENGTH_KEYS: d[k]=number(self.edits[k].text())*self.factor
         for k in ('flc','maxhist','ihist_out','nr_pproj'): d[k]=number(self.edits[k].text())
         d['case_geo']=self.geometry.currentData(); d['tar_dynamic']=self.dynamic.isChecked(); rows=[]
@@ -518,7 +553,7 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         self.info_button.setToolTip(translated('案例信息',language)+'\n'+self.path_label.text()+'\n'+self.mode_note.text()+'\nSDTrimSP-2D 3.01')
         self.target_editor.report_validation_errors(errors)
         # Keep the persistent status compact; detailed errors belong to the timed overlay.
-        note=self.raw_text('输入有误，请修正参数后重试。','Invalid input. Correct the parameters and retry.') if errors else '\n'.join(line[:140] for line in self.check_output.toPlainText().splitlines()[:2])
+        note=translated(errors[0],language)[:140] if errors else '\n'.join(line[:140] for line in self.check_output.toPlainText().splitlines()[:2])
         self.target_editor.validation_label.setText(note)
         self.target_editor.validation_label.setToolTip(self.check_output.toPlainText())
 
@@ -530,6 +565,15 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         plot.clear(); ax=plot.add_axes(self.preview_navigation.RESULTS_AXES_BOUNDS) if preview else plot.add_subplot(111)
         idx=max(0,self.color_species.currentIndex()); cmap=self.initial_gradients.colormap(d['symbol'][idx]); f=self.factor
         mode=int(d['case_geo'])
+        if mode==28:
+            from target_inputs import cylinder_schematic
+            xx,zz,solid,radius=cylinder_schematic(d)
+            field=np.ma.masked_where(~solid,np.full(solid.shape,d['qu_tar'][idx]))
+            ax.pcolormesh(xx/f,zz/f,field,cmap=cmap,vmin=0,vmax=1,shading='flat',rasterized=True)
+            ax.set_aspect('equal');ax.set_xlabel('x / '+self.unit.currentText());ax.set_ylabel('z / '+self.unit.currentText())
+            ax.set_title(('Specialized geometry 28: grid-selection schematic, R=' if english else '专用几何 28：网格筛选示意，R=')+fmt(radius/f)+' '+self.unit.currentText(),fontsize=10)
+            if preview:self.preview_navigation.unavailable(ax)
+            canvas.draw_idle();return ax
         if mode not in GEOMETRIES:
             ax.text(.5,.5,'该几何仅保留输入参数\n暂不提供结构预览',ha='center',va='center',transform=ax.transAxes)
             ax.set_axis_off()
@@ -543,22 +587,13 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
             ax.set_xlabel(f'x / {self.unit.currentText()}');ax.set_ylabel(f'z / {self.unit.currentText()}')
             if preview:self.preview_navigation.unavailable(ax)
             canvas.draw_idle();return ax
-        layered=d.get('iq0',0)>0 or d.get('iq0_surf',0)>0
+        layered=d.get('iq0',0)>0 or d.get('iq0_surf',0)==1 or (d.get('l_clust') and d.get('l_clust_read'))
         if layered:
-            # 示意图使用独立采样，不声称等同于内核的几何切分与层归属。
-            xx=np.linspace(-d['geo_x'],d['geo_x'],min(501,max(51,stats['nx']+1)))
-            zz=np.linspace(d['geo_z'],max(float(max(sz)),stats['top']),min(401,max(51,stats['nz']+1)))
-            xc=(xx[:-1]+xx[1:])/2; zc=(zz[:-1]+zz[1:])/2
-            X,Z=np.meshgrid(xc,zc); surf=np.interp(xc,sx,sz)[None,:]
-            composition=np.full_like(Z,float(d['qu_tar'][idx]))
-            if d.get('iq0',0)>0:
-                for upper,lower,q in parse_layers(d['_files']['initial_composition.inp'],len(d['symbol'])):
-                    composition=np.where((Z>=lower)&(Z<upper),q[idx],composition)
-            if d.get('iq0_surf',0)>0:
-                distance=Z-surf
-                for upper,lower,q in parse_layers(d['_files']['initial_composition_surf.inp'],len(d['symbol'])):
-                    composition=np.where((distance>=lower)&(distance<upper),q[idx],composition)
-            composition=np.ma.masked_where(Z>surf,composition)
+            from target_inputs import composition_field,composition_mesh
+            xx,zz=composition_mesh(d,fig)
+            xc=(xx[:-1]+xx[1:])/2;zc=(zz[:-1]+zz[1:])/2
+            X,Z=np.meshgrid(xc,zc)
+            composition=composition_field(d,fig,X,Z,idx)
             ax.pcolormesh(xx/f,zz/f,composition,cmap=cmap,vmin=0,vmax=1,shading='flat',rasterized=True)
         else:
             vertices=[(-d['geo_x']/f,d['geo_z']/f),(d['geo_x']/f,d['geo_z']/f)]
@@ -567,7 +602,7 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
             patch._target_fraction=float(d['qu_tar'][idx]);ax.add_patch(patch)
             ax.text(0,d['geo_z']/f*.55,('Matrix' if d.get('l_clust') else 'Substrate') if english else ('基体' if d.get('l_clust') else '基底'),ha='center',va='center',color=contrast_text(cmap(float(d['qu_tar'][idx]))),fontsize=10)
         ax.plot(sx/f,sz/f,color='#526a7d',lw=.7)
-        if fig:
+        if fig and not layered:
             add_target_blocks(ax,fig,d,idx,f,cmap)
         width=2*d['geo_x']/f; top=stats['top']/f; gap=max(width*.18,top*.12,1e-6); upper=top+gap
         if self.show_start.isChecked() and int(d['case_start'])!=1:
@@ -584,10 +619,10 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         ax.set_xlim(-d['geo_x']/f-width*.04,d['geo_x']/f+width*.04); ax.set_ylim(d['geo_z']/f-width*.04,upper)
         ax.set_aspect('auto' if editor else 'equal',adjustable='box'); ax.set_xlabel(f'x / {self.unit.currentText()}'); ax.set_ylabel(f'z / {self.unit.currentText()}')
         title='初始轮廓 / 分层示意（内核按网格建靶）' if layered or mode in (24,25,27) else '一维靶（横向为单网格）' if mode==10 else '初始靶材截面'
-        if d.get('l_clust'): title='基体示意（随机团簇位置由内核生成）'
+        if d.get('l_clust') and not d.get('l_clust_read'): title='成分示意（内置团簇固定布局由内核生成，未显示）'
         if english:
             title='Initial profile / layer schematic (kernel builds the target on its mesh)' if layered or mode in (24,25,27) else '1D target (single lateral cell)' if mode==10 else 'Initial target cross section'
-            if d.get('l_clust'):title='Matrix schematic (random clusters generated by kernel)'
+            if d.get('l_clust') and not d.get('l_clust_read'):title='Composition schematic (kernel-defined clusters not shown)'
         ax.set_title(title,fontsize=10)
         if not editor:
             cb=plot.colorbar(ScalarMappable(norm=Normalize(0,1),cmap=cmap),cax=plot.add_axes(self.preview_navigation.COLORBAR_BOUNDS)) if preview else plot.colorbar(ScalarMappable(norm=Normalize(0,1),cmap=cmap),ax=ax,shrink=.72,pad=.04)
@@ -616,6 +651,7 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
         self.factor=new; self.loading=False; self.refresh()
 
     def choose_species(self,row=None):
+        if self.raw_pending and not self.apply_raw_edits():return
         if row is None: row=max(0,self.species.currentRow())
         if not 0<=row<self.species.rowCount(): return
         self.species.setCurrentCell(row,0)
@@ -624,20 +660,43 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
             QMessageBox.warning(self,'材料表读取失败',str(error)); return
         if dialog.exec()==ElementDialog.DialogCode.Accepted and dialog.selected_symbol:
             if dialog.selected_symbol!=self.cell(self.species,row,0):
+                try:
+                    from species_dependencies import plan_species_change,commit_species_plan
+                    plan=plan_species_change(self,'replace',row,dialog.selected_symbol)
+                except ValueError as e:
+                    QMessageBox.warning(self,self.raw_text('元素依赖','Species dependencies'),str(e));return
+                commit_species_plan(self,plan)
                 self.set_cell(self.species,row,0,dialog.selected_symbol)
+                self.set_material_cells(row,dialog.selected_symbol)
                 self.refresh()
 
     def add_species(self):
+        if self.raw_pending and not self.apply_raw_edits():return
         if self.species.rowCount()>=8: QMessageBox.information(self,'元素数量','试用版最多支持8种元素。'); return
+        try:
+            if any(not self.cell(self.species,i,0) for i in range(self.species.rowCount())):raise ValueError(self.raw_text('请先选择空白行的元素。','Choose the species for the blank row first.'))
+            from species_dependencies import plan_species_change,commit_species_plan
+            plan=plan_species_change(self,'add')
+        except ValueError as e:
+            QMessageBox.warning(self,self.raw_text('元素依赖','Species dependencies'),str(e));return
+        commit_species_plan(self,plan)
         self.loading=True; i=self.species.rowCount(); self.species.insertRow(i)
         for j,v in enumerate(['',0,0,0,0,1]): self.set_cell(self.species,i,j,v)
+        self.set_material_cells(i,'')
         col=self.blocks.columnCount(); self.blocks.setColumnCount(col+1)
         for row in range(self.blocks.rowCount()): self.set_cell(self.blocks,row,col,0)
         self.loading=False;self.update_headers(); self.changed(); self.species.setCurrentCell(i,0)
 
     def remove_species(self,row=None):
+        if self.raw_pending and not self.apply_raw_edits():return
         i=self.species.currentRow() if row is None else row
         if not 0<=i<self.species.rowCount() or self.species.rowCount()<=1: return
+        try:
+            from species_dependencies import plan_species_change,commit_species_plan
+            plan=plan_species_change(self,'remove',i)
+        except ValueError as e:
+            QMessageBox.warning(self,self.raw_text('元素依赖','Species dependencies'),str(e));return
+        commit_species_plan(self,plan)
         widget=self.species.cellWidget(i,0)
         if widget is not None:widget.hide()
         self.loading=True; self.species.removeRow(i); self.blocks.removeColumn(4+i); self.loading=False;self.update_headers(); self.changed()
@@ -696,7 +755,10 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
 
     def adopt_saved_case(self,out):
         out=Path(out).resolve()
-        self.load_case(out);self.last_export=out;self.dirty=False
+        previous=self.raw_applying;self.raw_applying=True
+        try:self.load_case(out)
+        finally:self.raw_applying=previous
+        self.removed_files.clear();self.last_export=out;self.dirty=False
         self.target_editor.select_cells(self.target_editor.selected_cells,self.target_editor.active_cell)
 
     def save_current(self):
@@ -726,14 +788,22 @@ class Window(NewCaseActions,InputEditing,QMainWindow):
             run_namelist=Namelist(tri)
             for key in ('inel0','isot'):
                 if key in run_namelist.fields:data[key]=run_namelist.get(key)
+            incomplete=[row['symbol'] for row in data['_material_overrides']
+                        if any(row[key] is None or row[key]<=0 for key in ('mass','density','atomic_density'))]
+            if incomplete:
+                QMessageBox.warning(self,self.raw_text('材料参数不完整','Incomplete material properties'),
+                    self.raw_text('请为以下组分填写大于0的原子质量、质量密度和原子数密度：','Enter positive atomic mass, mass density, and atomic number density for: ')+', '.join(incomplete))
+                return
             if not preflight(self,self.engine_config,data,warnings):return
             self.run_progress.reset_run()
             destination=Path(self.engine_config.results)/(datetime.now().strftime('%Y%m%d_%H%M%S_%f')+'_GUI_'+self.case_basename())
             self.write_case(destination); self.run_directory=destination; self.stop_requested=False
-            stage_tables(self.engine_config,destination)
+            staged_tables=stage_tables(self.engine_config,destination)
+            apply_material_overrides(staged_tables,data['_material_overrides'],data['isbv'])
             # Only the private run copy receives a portable path to its table snapshot.
             run_tri=read_text(destination/'tri.inp')
-            atomic_write_text(destination/'tri.inp',Namelist(run_tri).patch({'tableinp':"'./_tables'"}))
+            run_changes={'tableinp':"'./_tables'",'dns_0':', '.join('-1' for _ in data['symbol'])}
+            atomic_write_text(destination/'tri.inp',Namelist(run_tri).patch(run_changes))
             atomic_write_text(destination/'stop_run.inp','0\n',encoding='ascii')
             program,arguments=launch_command(self.engine_config,destination)
             self.log.clear(); self.log.appendPlainText(self.raw_text('运行目录：','Run directory: ')+str(destination)+'\n'+self.raw_text('正在启动所选内核 / 单进程计算…','Starting selected engine / single-process calculation…')+'\n')

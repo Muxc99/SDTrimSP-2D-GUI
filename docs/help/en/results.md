@@ -1,5 +1,7 @@
 # Plots and physical quantities
 
+Surface curves retain original traversal order and vertical faces. Opposite-boundary and diagonal non-cell-edge jumps are disconnected. All raw points remain; exported data includes connect_from_previous and break_reason. Invalid cells are reported separately: splitting a curve does not repair engine output.
+
 ## Outputs and plots
 
 Load files from one case directory. All 21 plots depend on actual outputs; unavailable plots are disabled, never synthesized.

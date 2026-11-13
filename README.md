@@ -1,4 +1,4 @@
-# SDTrimSP-2D GUI v0.9.2
+# SDTrimSP-2D GUI v1.0.0
 
 A bilingual desktop editor for SDTrimSP-2D inputs, 2D target drawing and interactive result plots.
 
@@ -46,7 +46,7 @@ Each run receives independent input and table copies. Only the run copy's tablei
 
 ## Screenshots
 
-Earlier GUI versions are illustrated below; the 0.9 toolbar and engine settings have changed.
+These screenshots show the GUI and do not contain the external calculation kernel or its data.
 
 ![Target editor](docs/images/target-editor.png)
 
@@ -79,3 +79,11 @@ The release uses Python 3.14 x64 and the pinned build dependencies. The build wr
 ## Third-party notices
 
 See PLOTTER-LICENSE.txt for the included plotting component. This notice does not license or redistribute the external SDTrimSP engine. Bundled Windows dependencies retain their included licenses.
+
+## Version 1.0.0
+
+This release restores editable `qu_max` concentration limits, expands the bilingual offline help, and keeps the engine, material tables, cases, results and official manual separate from the GUI distribution.
+
+## Contributors
+
+Muxc99 and Codex.
